@@ -1,3 +1,4 @@
+#[cfg(not(windows))]
 use std::iter::Peekable;
 use std::{cmp, mem};
 
@@ -5,7 +6,9 @@ use glutin::surface::Rect;
 
 use alacritty_terminal::index::Point;
 use alacritty_terminal::selection::SelectionRange;
-use alacritty_terminal::term::{LineDamageBounds, TermDamageIterator};
+use alacritty_terminal::term::LineDamageBounds;
+#[cfg(not(windows))]
+use alacritty_terminal::term::TermDamageIterator;
 
 use crate::display::SizeInfo;
 
@@ -90,6 +93,7 @@ impl DamageTracker {
     }
 
     /// Get shaped frame damage for the active frame.
+    #[cfg(not(windows))]
     pub fn shape_frame_damage(&self, size_info: SizeInfo<u32>) -> Vec<Rect> {
         if self.frames[0].full {
             vec![Rect::new(0, 0, size_info.width() as i32, size_info.height() as i32)]
@@ -208,16 +212,19 @@ pub fn viewport_y_to_damage_y(size_info: &SizeInfo, y: i32, height: i32) -> i32 
 }
 
 /// Convert viewport `y` coordinate to [`Rect`] damage coordinate.
+#[cfg(not(windows))]
 pub fn damage_y_to_viewport_y(size_info: &SizeInfo, rect: &Rect) -> i32 {
     size_info.height() as i32 - rect.y - rect.height
 }
 
 /// Iterator which converts `alacritty_terminal` damage information into renderer damaged rects.
+#[cfg(not(windows))]
 struct RenderDamageIterator<'a> {
     damaged_lines: Peekable<TermDamageIterator<'a>>,
     size_info: &'a SizeInfo<u32>,
 }
 
+#[cfg(not(windows))]
 impl<'a> RenderDamageIterator<'a> {
     pub fn new(damaged_lines: TermDamageIterator<'a>, size_info: &'a SizeInfo<u32>) -> Self {
         Self { damaged_lines: damaged_lines.peekable(), size_info }
@@ -251,6 +258,7 @@ impl<'a> RenderDamageIterator<'a> {
     }
 }
 
+#[cfg(not(windows))]
 impl Iterator for RenderDamageIterator<'_> {
     type Item = Rect;
 
@@ -275,6 +283,7 @@ impl Iterator for RenderDamageIterator<'_> {
 }
 
 /// Check if two given [`glutin::surface::Rect`] overlap.
+#[cfg(not(windows))]
 fn rects_overlap(lhs: Rect, rhs: Rect) -> bool {
     !(
         // `lhs` is left of `rhs`.
@@ -289,6 +298,7 @@ fn rects_overlap(lhs: Rect, rhs: Rect) -> bool {
 }
 
 /// Merge two [`glutin::surface::Rect`] by producing the smallest rectangle that contains both.
+#[cfg(not(windows))]
 #[inline]
 fn merge_rects(lhs: Rect, rhs: Rect) -> Rect {
     let left_x = cmp::min(lhs.x, rhs.x);
@@ -361,12 +371,10 @@ mod tests {
         let width = 10;
         let size_info = SizeInfo::new(viewport_height, viewport_height, 5., 5., 0., 0., true);
         frame_damage.add_viewport_rect(&size_info, x, y, width, height);
-        assert_eq!(frame_damage.rects[0], Rect {
-            x,
-            y: viewport_height as i32 - y - height,
-            width,
-            height
-        });
+        assert_eq!(
+            frame_damage.rects[0],
+            Rect { x, y: viewport_height as i32 - y - height, width, height }
+        );
         assert_eq!(frame_damage.rects[0].y, viewport_y_to_damage_y(&size_info, y, height));
         assert_eq!(damage_y_to_viewport_y(&size_info, &frame_damage.rects[0]), y);
     }

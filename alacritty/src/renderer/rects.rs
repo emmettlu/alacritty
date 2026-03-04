@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+#[cfg(not(windows))]
 use std::mem;
 
 use ahash::RandomState;
 use crossfont::Metrics;
+#[cfg(not(windows))]
 use log::info;
 
 use alacritty_terminal::grid::Dimensions;
@@ -12,8 +14,11 @@ use alacritty_terminal::term::cell::Flags;
 use crate::display::SizeInfo;
 use crate::display::color::Rgb;
 use crate::display::content::RenderableCell;
+#[cfg(not(windows))]
 use crate::gl::types::*;
+#[cfg(not(windows))]
 use crate::renderer::shader::{ShaderError, ShaderProgram, ShaderVersion};
+#[cfg(not(windows))]
 use crate::{gl, renderer};
 
 #[derive(Debug, Copy, Clone)]
@@ -48,6 +53,7 @@ pub enum RectKind {
     Undercurl = 1,
     DottedUnderline = 2,
     DashedUnderline = 3,
+    #[allow(dead_code)]
     NumKinds = 4,
 }
 
@@ -226,10 +232,17 @@ impl RenderLines {
     }
 }
 
+// ============================================================
+// OpenGL 专用的矩形渲染器 (仅在 opengl feature 启用时编译)
+// ============================================================
+
 /// Shader sources for rect rendering program.
+#[cfg(not(windows))]
 const RECT_SHADER_F: &str = include_str!("../../res/rect.f.glsl");
+#[cfg(not(windows))]
 const RECT_SHADER_V: &str = include_str!("../../res/rect.v.glsl");
 
+#[cfg(not(windows))]
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 struct Vertex {
@@ -244,6 +257,7 @@ struct Vertex {
     a: u8,
 }
 
+#[cfg(not(windows))]
 #[derive(Debug)]
 pub struct RectRenderer {
     // GL buffer objects.
@@ -254,6 +268,7 @@ pub struct RectRenderer {
     vertices: [Vec<Vertex>; 4],
 }
 
+#[cfg(not(windows))]
 impl RectRenderer {
     pub fn new(shader_version: ShaderVersion) -> Result<Self, renderer::Error> {
         let mut vao: GLuint = 0;
@@ -397,6 +412,7 @@ impl RectRenderer {
     }
 }
 
+#[cfg(not(windows))]
 impl Drop for RectRenderer {
     fn drop(&mut self) {
         unsafe {
@@ -407,6 +423,7 @@ impl Drop for RectRenderer {
 }
 
 /// Rectangle drawing program.
+#[cfg(not(windows))]
 #[derive(Debug)]
 pub struct RectShaderProgram {
     /// Shader program.
@@ -434,6 +451,7 @@ pub struct RectShaderProgram {
     u_undercurl_position: Option<GLint>,
 }
 
+#[cfg(not(windows))]
 impl RectShaderProgram {
     pub fn new(shader_version: ShaderVersion, kind: RectKind) -> Result<Self, ShaderError> {
         // XXX: This must be in-sync with fragment shader defines.

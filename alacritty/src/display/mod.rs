@@ -3,16 +3,25 @@
 
 use std::cmp;
 use std::fmt::{self, Formatter};
-use std::mem::{self, ManuallyDrop};
+#[cfg(not(windows))]
+use std::mem::ManuallyDrop;
+use std::mem::{self};
 use std::num::NonZeroU32;
+#[cfg(not(windows))]
 use std::ops::Deref;
 use std::time::{Duration, Instant};
 
+#[cfg(not(windows))]
 use glutin::config::GetGlConfig;
+#[cfg(not(windows))]
 use glutin::context::{NotCurrentContext, PossiblyCurrentContext};
+#[cfg(not(windows))]
 use glutin::display::GetGlDisplay;
+#[cfg(not(windows))]
 use glutin::error::ErrorKind;
+#[cfg(not(windows))]
 use glutin::prelude::*;
+#[cfg(not(windows))]
 use glutin::surface::{Surface, SwapInterval, WindowSurface};
 
 use log::{debug, info};
@@ -20,6 +29,7 @@ use parking_lot::MutexGuard;
 use serde::{Deserialize, Serialize};
 use winit::dpi::PhysicalSize;
 use winit::keyboard::ModifiersState;
+#[cfg(not(windows))]
 use winit::raw_window_handle::RawWindowHandle;
 use winit::window::CursorIcon;
 
@@ -37,6 +47,7 @@ use alacritty_terminal::term::{
 use alacritty_terminal::vte::ansi::{CursorShape, NamedColor};
 
 use crate::config::UiConfig;
+#[cfg(not(windows))]
 use crate::config::debug::RendererPreference;
 use crate::config::font::Font;
 use crate::config::window::Dimensions;
@@ -46,13 +57,20 @@ use crate::display::bell::VisualBell;
 use crate::display::color::{List, Rgb};
 use crate::display::content::{RenderableContent, RenderableCursor};
 use crate::display::cursor::IntoRects;
-use crate::display::damage::{DamageTracker, damage_y_to_viewport_y};
+use crate::display::damage::DamageTracker;
+#[cfg(not(windows))]
+use crate::display::damage::damage_y_to_viewport_y;
 use crate::display::hint::{HintMatch, HintState};
 use crate::display::meter::Meter;
 use crate::display::window::Window;
 use crate::event::{Event, EventType, Mouse, SearchState};
 use crate::message_bar::{MessageBuffer, MessageType};
 use crate::renderer::rects::{RenderLine, RenderLines, RenderRect};
+#[cfg(windows)]
+use crate::renderer::wgpu_backend::WgpuRenderer;
+#[cfg(windows)]
+use crate::renderer::{self, GlyphCache};
+#[cfg(not(windows))]
 use crate::renderer::{self, GlyphCache, Renderer, platform};
 use crate::scheduler::{Scheduler, TimerId, Topic};
 use crate::string::{ShortenDirection, StrShortener};
@@ -77,6 +95,7 @@ const BACKWARD_SEARCH_LABEL: &str = "Backward Search: ";
 const SHORTENER: char = '…';
 
 /// Color which is used to highlight damaged rects when debugging.
+#[cfg(not(windows))]
 const DAMAGE_RECT_COLOR: Rgb = Rgb::new(255, 0, 255);
 
 #[derive(Debug)]
@@ -91,7 +110,12 @@ pub enum Error {
     Render(renderer::Error),
 
     /// Error during context operations.
+    #[cfg(not(windows))]
     Context(glutin::error::Error),
+
+    /// Error during wgpu operations.
+    #[cfg(windows)]
+    Wgpu(String),
 }
 
 impl std::error::Error for Error {
@@ -100,7 +124,10 @@ impl std::error::Error for Error {
             Error::Window(err) => err.source(),
             Error::Font(err) => err.source(),
             Error::Render(err) => err.source(),
+            #[cfg(not(windows))]
             Error::Context(err) => err.source(),
+            #[cfg(windows)]
+            Error::Wgpu(_) => None,
         }
     }
 }
@@ -111,7 +138,10 @@ impl fmt::Display for Error {
             Error::Window(err) => err.fmt(f),
             Error::Font(err) => err.fmt(f),
             Error::Render(err) => err.fmt(f),
+            #[cfg(not(windows))]
             Error::Context(err) => err.fmt(f),
+            #[cfg(windows)]
+            Error::Wgpu(err) => write!(f, "wgpu error: {err}"),
         }
     }
 }
@@ -134,6 +164,7 @@ impl From<renderer::Error> for Error {
     }
 }
 
+#[cfg(not(windows))]
 impl From<glutin::error::Error> for Error {
     fn from(val: glutin::error::Error) -> Self {
         Error::Context(val)
@@ -354,6 +385,7 @@ pub struct Display {
     /// Frames since hint highlight was created.
     vi_highlighted_hint_age: usize,
 
+    #[cfg(not(windows))]
     pub raw_window_handle: RawWindowHandle,
 
     /// UI cursor visibility for blinking.
@@ -388,18 +420,186 @@ pub struct Display {
     // Mouse point position when highlighting hints.
     hint_mouse_point: Option<Point>,
 
+    // --- OpenGL 平台 (非 Windows) ---
+    #[cfg(not(windows))]
     renderer: ManuallyDrop<Renderer>,
+    #[cfg(not(windows))]
     renderer_preference: Option<RendererPreference>,
-
+    #[cfg(not(windows))]
     surface: ManuallyDrop<Surface<WindowSurface>>,
-
+    #[cfg(not(windows))]
     context: ManuallyDrop<PossiblyCurrentContext>,
+
+    // --- wgpu 平台 (Windows) ---
+    #[cfg(windows)]
+    wgpu_renderer: WgpuRenderer,
+    #[cfg(windows)]
+    wgpu_surface: wgpu::Surface<'static>,
+    #[cfg(windows)]
+    wgpu_surface_config: wgpu::SurfaceConfiguration,
 
     glyph_cache: GlyphCache,
     meter: Meter,
 }
 
 impl Display {
+    // ==========================================================================
+    // Windows (wgpu) 构造函数
+    // ==========================================================================
+    #[cfg(windows)]
+    pub fn new(window: Window, config: &UiConfig) -> Result<Display, Error> {
+        use std::sync::Arc;
+
+        let scale_factor = window.scale_factor as f32;
+        let rasterizer = Rasterizer::new()?;
+
+        let font_size = config.font.size().scale(scale_factor);
+        debug!("Loading \"{}\" font", &config.font.normal().family);
+        let font = config.font.clone().with_size(font_size);
+        let mut glyph_cache = GlyphCache::new(rasterizer, &font)?;
+
+        let metrics = glyph_cache.font_metrics();
+        let (cell_width, cell_height) = compute_cell_size(config, &metrics);
+
+        // 根据用户配置调整窗口大小.
+        if let Some(dimensions) = config.window.dimensions() {
+            let size = window_size(config, dimensions, cell_width, cell_height, scale_factor);
+            window.request_inner_size(size);
+        }
+
+        // 创建 wgpu instance / adapter / device / queue / surface.
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::DX12,
+            ..Default::default()
+        });
+
+        let wgpu_surface = unsafe {
+            let target = wgpu::SurfaceTargetUnsafe::from_window(window.winit_window())
+                .map_err(|e| Error::Wgpu(format!("create surface target: {e}")))?;
+            instance
+                .create_surface_unsafe(target)
+                .map_err(|e| Error::Wgpu(format!("create surface: {e}")))?
+        };
+
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: Some(&wgpu_surface),
+            force_fallback_adapter: false,
+        }))
+        .map_err(|e| Error::Wgpu(format!("no suitable GPU adapter found: {e}")))?;
+
+        info!("wgpu adapter: {:?}", adapter.get_info());
+
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("alacritty_device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            ..Default::default()
+        }))
+        .map_err(|e| Error::Wgpu(format!("request device: {e}")))?;
+
+        let device = Arc::new(device);
+        let queue = Arc::new(queue);
+
+        let viewport_size = window.inner_size();
+        let caps = wgpu_surface.get_capabilities(&adapter);
+        let surface_format = caps.formats[0];
+        info!("wgpu surface format: {:?}", surface_format);
+
+        let wgpu_surface_config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: surface_format,
+            view_formats: vec![],
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            width: viewport_size.width.max(1),
+            height: viewport_size.height.max(1),
+            desired_maximum_frame_latency: 2,
+            present_mode: wgpu::PresentMode::AutoNoVsync,
+        };
+        wgpu_surface.configure(&device, &wgpu_surface_config);
+
+        // 创建 wgpu 渲染器.
+        let mut wgpu_renderer =
+            WgpuRenderer::new(Arc::clone(&device), Arc::clone(&queue), surface_format);
+
+        // 预加载常用字形.
+        debug!("Filling glyph cache with common glyphs");
+        {
+            let mut loader = wgpu_renderer.loader_api();
+            glyph_cache.reset_glyph_cache(&mut loader);
+        }
+
+        let padding = config.window.padding(window.scale_factor as f32);
+
+        // 至少一列一行.
+        let size_info = SizeInfo::new(
+            viewport_size.width as f32,
+            viewport_size.height as f32,
+            cell_width,
+            cell_height,
+            padding.0,
+            padding.1,
+            config.window.dynamic_padding && config.window.dimensions().is_none(),
+        );
+
+        info!("Cell size: {cell_width} x {cell_height}");
+        info!("Padding: {} x {}", size_info.padding_x(), size_info.padding_y());
+        info!("Width: {}, Height: {}", size_info.width(), size_info.height());
+
+        // 清屏.
+        let background_color = config.colors.primary.background;
+        {
+            let output =
+                wgpu_surface.get_current_texture().map_err(|e| Error::Wgpu(format!("{e}")))?;
+            let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let mut encoder = device.create_command_encoder(&Default::default());
+            wgpu_renderer.clear(&mut encoder, &view, background_color, config.window_opacity());
+            queue.submit(std::iter::once(encoder.finish()));
+            output.present();
+        }
+
+        // 设置窗口 resize increments.
+        if config.window.resize_increments {
+            window.set_resize_increments(PhysicalSize::new(cell_width, cell_height));
+        }
+
+        window.set_visible(true);
+
+        let hint_state = HintState::new(config.hints.alphabet());
+
+        let mut damage_tracker = DamageTracker::new(size_info.screen_lines(), size_info.columns());
+        damage_tracker.debug = config.debug.highlight_damage;
+
+        Ok(Self {
+            visual_bell: VisualBell::from(&config.bell),
+            colors: List::from(&config.colors),
+            frame_timer: FrameTimer::new(),
+            damage_tracker,
+            glyph_cache,
+            hint_state,
+            size_info,
+            font_size,
+            window,
+            wgpu_renderer,
+            wgpu_surface,
+            wgpu_surface_config,
+            pending_renderer_update: Default::default(),
+            vi_highlighted_hint_age: Default::default(),
+            highlighted_hint_age: Default::default(),
+            vi_highlighted_hint: Default::default(),
+            highlighted_hint: Default::default(),
+            hint_mouse_point: Default::default(),
+            pending_update: Default::default(),
+            cursor_hidden: Default::default(),
+            meter: Default::default(),
+            ime: Default::default(),
+        })
+    }
+
+    // ==========================================================================
+    // 非 Windows (OpenGL) 构造函数
+    // ==========================================================================
+    #[cfg(not(windows))]
     pub fn new(
         window: Window,
         gl_context: NotCurrentContext,
@@ -542,17 +742,25 @@ impl Display {
         })
     }
 
+    #[cfg(not(windows))]
     #[inline]
     pub fn gl_context(&self) -> &PossiblyCurrentContext {
         &self.context
     }
 
+    #[cfg(not(windows))]
     pub fn make_not_current(&mut self) {
         if self.context.is_current() {
             self.context.make_not_current_in_place().expect("failed to disable context");
         }
     }
 
+    #[cfg(windows)]
+    pub fn make_not_current(&mut self) {
+        // wgpu 不需要此操作.
+    }
+
+    #[cfg(not(windows))]
     pub fn make_current(&mut self) {
         let is_current = self.context.is_current();
 
@@ -604,6 +812,7 @@ impl Display {
         debug!("Recovered window {:?} from gpu reset", self.window.id());
     }
 
+    #[cfg(not(windows))]
     fn swap_buffers(&self) {
         #[allow(clippy::single_match)]
         let res = match (self.surface.deref(), &self.context.deref()) {
@@ -637,11 +846,20 @@ impl Display {
     }
 
     /// Reset glyph cache.
+    #[cfg(not(windows))]
     fn reset_glyph_cache(&mut self) {
         let cache = &mut self.glyph_cache;
         self.renderer.with_loader(|mut api| {
             cache.reset_glyph_cache(&mut api);
         });
+    }
+
+    /// Reset glyph cache (wgpu).
+    #[cfg(windows)]
+    fn reset_glyph_cache(&mut self) {
+        let cache = &mut self.glyph_cache;
+        let mut loader = self.wgpu_renderer.loader_api();
+        cache.reset_glyph_cache(&mut loader);
     }
 
     // XXX: this function must not call to any `OpenGL` related tasks. Renderer updates are
@@ -741,6 +959,7 @@ impl Display {
     // back buffer and render with the previous state. This also solves flickering during resizes.
     //
     /// Update the state of the renderer.
+    #[cfg(not(windows))]
     pub fn process_renderer_update(&mut self) {
         let renderer_update = match self.pending_renderer_update.take() {
             Some(renderer_update) => renderer_update,
@@ -767,11 +986,41 @@ impl Display {
         info!("Width: {}, Height: {}", self.size_info.width(), self.size_info.height());
     }
 
-    /// Draw the screen.
+    /// Update the state of the renderer (wgpu).
+    #[cfg(windows)]
+    pub fn process_renderer_update(&mut self) {
+        let renderer_update = match self.pending_renderer_update.take() {
+            Some(renderer_update) => renderer_update,
+            _ => return,
+        };
+
+        // Resize surface.
+        if renderer_update.resize {
+            let width = self.size_info.width() as u32;
+            let height = self.size_info.height() as u32;
+            if width > 0 && height > 0 {
+                self.wgpu_surface_config.width = width;
+                self.wgpu_surface_config.height = height;
+                self.wgpu_surface.configure(self.wgpu_renderer.device(), &self.wgpu_surface_config);
+            }
+        }
+
+        if renderer_update.clear_font_cache {
+            self.reset_glyph_cache();
+        }
+
+        self.wgpu_renderer.resize(&self.size_info);
+
+        info!("Padding: {} x {}", self.size_info.padding_x(), self.size_info.padding_y());
+        info!("Width: {}, Height: {}", self.size_info.width(), self.size_info.height());
+    }
+
+    /// Draw the screen (OpenGL).
     ///
     /// A reference to Term whose state is being drawn must be provided.
     ///
     /// This call may block if vsync is enabled.
+    #[cfg(not(windows))]
     pub fn draw<T: EventListener>(
         &mut self,
         mut terminal: MutexGuard<'_, Term<T>>,
@@ -1046,11 +1295,549 @@ impl Display {
         self.damage_tracker.swap_damage();
     }
 
+    /// Draw the screen (wgpu / Windows).
+    #[cfg(windows)]
+    pub fn draw<T: EventListener>(
+        &mut self,
+        mut terminal: MutexGuard<'_, Term<T>>,
+        scheduler: &mut Scheduler,
+        message_buffer: &MessageBuffer,
+        config: &UiConfig,
+        search_state: &mut SearchState,
+    ) {
+        // 收集可渲染内容.
+        let mut content = RenderableContent::new(config, self, &terminal, search_state);
+        let mut grid_cells = Vec::new();
+        for cell in &mut content {
+            grid_cells.push(cell);
+        }
+        let selection_range = content.selection_range();
+        let foreground_color = content.color(NamedColor::Foreground as usize);
+        let background_color = content.color(NamedColor::Background as usize);
+        let display_offset = content.display_offset();
+        let cursor = content.cursor();
+
+        let cursor_point = terminal.grid().cursor.point;
+        let total_lines = terminal.grid().total_lines();
+        let metrics = self.glyph_cache.font_metrics();
+        let size_info = self.size_info;
+
+        let vi_mode = terminal.mode().contains(TermMode::VI);
+        let vi_cursor_point = if vi_mode { Some(terminal.vi_mode_cursor.point) } else { None };
+
+        // 添加终端损伤.
+        match terminal.damage() {
+            TermDamage::Full => self.damage_tracker.frame().mark_fully_damaged(),
+            TermDamage::Partial(damaged_lines) => {
+                for damage in damaged_lines {
+                    self.damage_tracker.frame().damage_line(damage);
+                }
+            },
+        }
+        terminal.reset_damage();
+
+        // 尽早释放终端锁.
+        drop(terminal);
+
+        // 验证高亮提示.
+        self.validate_hint_highlights(display_offset);
+
+        let requires_full_damage = self.visual_bell.intensity() != 0.
+            || self.hint_state.active()
+            || search_state.regex().is_some();
+        if requires_full_damage {
+            self.damage_tracker.frame().mark_fully_damaged();
+            self.damage_tracker.next_frame().mark_fully_damaged();
+        }
+
+        let vi_cursor_viewport_point =
+            vi_cursor_point.and_then(|cursor| term::point_to_viewport(display_offset, cursor));
+        self.damage_tracker.damage_vi_cursor(vi_cursor_viewport_point);
+        self.damage_tracker.damage_selection(selection_range, display_offset);
+
+        // 获取 surface texture.
+        let output = match self.wgpu_surface.get_current_texture() {
+            Ok(output) => output,
+            Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
+                // 重新配置 surface.
+                self.wgpu_surface.configure(self.wgpu_renderer.device(), &self.wgpu_surface_config);
+                match self.wgpu_surface.get_current_texture() {
+                    Ok(output) => output,
+                    Err(e) => {
+                        debug!("wgpu get_current_texture error after reconfigure: {e}");
+                        return;
+                    },
+                }
+            },
+            Err(e) => {
+                debug!("wgpu get_current_texture error: {e}");
+                return;
+            },
+        };
+        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self.wgpu_renderer.device().create_command_encoder(&Default::default());
+
+        // 清屏.
+        self.wgpu_renderer.clear(&mut encoder, &view, background_color, config.window_opacity());
+
+        let mut lines = RenderLines::new();
+
+        let has_highlighted_hint =
+            self.highlighted_hint.is_some() || self.vi_highlighted_hint.is_some();
+
+        // 绘制网格.
+        {
+            let _sampler = self.meter.sampler();
+
+            let highlighted_hint = &self.highlighted_hint;
+            let vi_highlighted_hint = &self.vi_highlighted_hint;
+            let damage_tracker = &mut self.damage_tracker;
+
+            let cells: Vec<_> = grid_cells
+                .into_iter()
+                .map(|mut cell| {
+                    if has_highlighted_hint {
+                        let point = term::viewport_to_point(display_offset, cell.point);
+                        let hyperlink =
+                            cell.extra.as_ref().and_then(|extra| extra.hyperlink.as_ref());
+
+                        let should_highlight = |hint: &Option<HintMatch>| {
+                            hint.as_ref()
+                                .is_some_and(|hint| hint.should_highlight(point, hyperlink))
+                        };
+                        if should_highlight(highlighted_hint)
+                            || should_highlight(vi_highlighted_hint)
+                        {
+                            damage_tracker.frame().damage_point(cell.point);
+                            cell.flags.insert(Flags::UNDERLINE);
+                        }
+                    }
+
+                    lines.update(&cell);
+                    cell
+                })
+                .collect();
+
+            self.wgpu_renderer.draw_cells(
+                &size_info,
+                &mut self.glyph_cache,
+                cells.into_iter(),
+                &mut encoder,
+                &view,
+            );
+        }
+
+        let mut rects = lines.rects(&metrics, &size_info);
+
+        if let Some(vi_cursor_point) = vi_cursor_point {
+            let line = (-vi_cursor_point.line.0 + size_info.bottommost_line().0) as usize;
+            let obstructed_column = Some(vi_cursor_point)
+                .filter(|point| point.line == -(display_offset as i32))
+                .map(|point| point.column);
+            self.wgpu_draw_line_indicator(
+                config,
+                total_lines,
+                obstructed_column,
+                line,
+                &mut encoder,
+                &view,
+            );
+        } else if search_state.regex().is_some() {
+            self.wgpu_draw_line_indicator(
+                config,
+                total_lines,
+                None,
+                display_offset,
+                &mut encoder,
+                &view,
+            );
+        };
+
+        // 绘制光标.
+        rects.extend(cursor.rects(&size_info, config.cursor.thickness()));
+
+        // Visual bell.
+        let visual_bell_intensity = self.visual_bell.intensity();
+        if visual_bell_intensity != 0. {
+            let visual_bell_rect = RenderRect::new(
+                0.,
+                0.,
+                size_info.width(),
+                size_info.height(),
+                config.bell.color,
+                visual_bell_intensity as f32,
+            );
+            rects.push(visual_bell_rect);
+        }
+
+        // IME 和搜索栏.
+        let ime_position = match search_state.regex() {
+            Some(regex) => {
+                let search_label = match search_state.direction() {
+                    Direction::Right => FORWARD_SEARCH_LABEL,
+                    Direction::Left => BACKWARD_SEARCH_LABEL,
+                };
+                let search_text = Self::format_search(regex, search_label, size_info.columns());
+                self.wgpu_draw_search(config, &search_text, &mut encoder, &view);
+
+                let line = size_info.screen_lines();
+                let column = Column(search_text.chars().count() - 1);
+
+                if self.ime.preedit().is_none() {
+                    let fg = config.colors.footer_bar_foreground();
+                    let shape = CursorShape::Underline;
+                    let cursor_width = NonZeroU32::new(1).unwrap();
+                    let cursor =
+                        RenderableCursor::new(Point::new(line, column), shape, fg, cursor_width);
+                    rects.extend(cursor.rects(&size_info, config.cursor.thickness()));
+                }
+                Some(Point::new(line, column))
+            },
+            None => {
+                let num_lines = self.size_info.screen_lines();
+                match vi_cursor_viewport_point {
+                    None => term::point_to_viewport(display_offset, cursor_point)
+                        .filter(|point| point.line < num_lines),
+                    point => point,
+                }
+            },
+        };
+
+        // IME.
+        if self.ime.is_enabled() {
+            if let Some(point) = ime_position {
+                let (fg, bg) = if search_state.regex().is_some() {
+                    (config.colors.footer_bar_foreground(), config.colors.footer_bar_background())
+                } else {
+                    (foreground_color, background_color)
+                };
+                self.wgpu_draw_ime_preview(point, fg, bg, &mut rects, config, &mut encoder, &view);
+            }
+        }
+
+        if let Some(message) = message_buffer.message() {
+            let search_offset = usize::from(search_state.regex().is_some());
+            let text = message.text(&size_info);
+
+            let start_line = size_info.screen_lines() + search_offset;
+            let y = size_info.cell_height().mul_add(start_line as f32, size_info.padding_y());
+
+            let bg = match message.ty() {
+                MessageType::Error => config.colors.normal.red,
+                MessageType::Warning => config.colors.normal.yellow,
+            };
+
+            let x = 0;
+            let width = size_info.width() as i32;
+            let height = (size_info.height() - y) as i32;
+            let message_bar_rect =
+                RenderRect::new(x as f32, y, width as f32, height as f32, bg, 1.);
+            rects.push(message_bar_rect);
+
+            self.damage_tracker.frame().add_viewport_rect(&size_info, x, y as i32, width, height);
+
+            // 绘制矩形.
+            self.wgpu_renderer.draw_rects(&size_info, &metrics, rects, &mut encoder, &view);
+
+            // 绘制消息文本.
+            let fg = config.colors.primary.background;
+            for (i, message_text) in text.iter().enumerate() {
+                let point = Point::new(start_line + i, Column(0));
+                self.wgpu_renderer.draw_string(
+                    point,
+                    fg,
+                    bg,
+                    message_text.chars(),
+                    &size_info,
+                    &mut self.glyph_cache,
+                    &mut encoder,
+                    &view,
+                );
+            }
+        } else {
+            self.wgpu_renderer.draw_rects(&size_info, &metrics, rects, &mut encoder, &view);
+        }
+
+        self.wgpu_draw_render_timer(config, &mut encoder, &view);
+
+        if has_highlighted_hint {
+            let cursor_point = vi_cursor_point.or(Some(cursor_point));
+            self.wgpu_draw_hyperlink_preview(
+                config,
+                cursor_point,
+                display_offset,
+                &mut encoder,
+                &view,
+            );
+        }
+
+        // 通知 winit 即将 present.
+        self.window.pre_present_notify();
+
+        // 提交 GPU 命令并 present.
+        self.wgpu_renderer.queue().submit(std::iter::once(encoder.finish()));
+        output.present();
+
+        self.request_frame(scheduler);
+        self.damage_tracker.swap_damage();
+    }
+
     /// Update to a new configuration.
     pub fn update_config(&mut self, config: &UiConfig) {
         self.damage_tracker.debug = config.debug.highlight_damage;
         self.visual_bell.update_config(&config.bell);
         self.colors = List::from(&config.colors);
+    }
+
+    // ==========================================================================
+    // wgpu (Windows) 专用的辅助绘制方法
+    // ==========================================================================
+
+    #[cfg(windows)]
+    #[inline(never)]
+    fn wgpu_draw_search(
+        &mut self,
+        config: &UiConfig,
+        text: &str,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+    ) {
+        let num_cols = self.size_info.columns();
+        let text = format!("{text:<num_cols$}");
+        let point = Point::new(self.size_info.screen_lines(), Column(0));
+        let fg = config.colors.footer_bar_foreground();
+        let bg = config.colors.footer_bar_background();
+        self.wgpu_renderer.draw_string(
+            point,
+            fg,
+            bg,
+            text.chars(),
+            &self.size_info,
+            &mut self.glyph_cache,
+            encoder,
+            view,
+        );
+    }
+
+    #[cfg(windows)]
+    #[inline(never)]
+    fn wgpu_draw_render_timer(
+        &mut self,
+        config: &UiConfig,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+    ) {
+        if !config.debug.render_timer {
+            return;
+        }
+        let timing = format!("{:.3} usec", self.meter.average());
+        let point = Point::new(self.size_info.screen_lines().saturating_sub(2), Column(0));
+        let fg = config.colors.primary.background;
+        let bg = config.colors.normal.red;
+
+        let damage = LineDamageBounds::new(point.line, point.column.0, timing.len());
+        self.damage_tracker.frame().damage_line(damage);
+        self.damage_tracker.next_frame().damage_line(damage);
+
+        self.wgpu_renderer.draw_string(
+            point,
+            fg,
+            bg,
+            timing.chars(),
+            &self.size_info,
+            &mut self.glyph_cache,
+            encoder,
+            view,
+        );
+    }
+
+    #[cfg(windows)]
+    #[inline(never)]
+    fn wgpu_draw_line_indicator(
+        &mut self,
+        config: &UiConfig,
+        total_lines: usize,
+        obstructed_column: Option<Column>,
+        line: usize,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+    ) {
+        let columns = self.size_info.columns();
+        let text = format!("[{}/{}]", line, total_lines - 1);
+        let column = Column(self.size_info.columns().saturating_sub(text.len()));
+        let point = Point::new(0, column);
+
+        let damage = LineDamageBounds::new(point.line, point.column.0, columns - 1);
+        self.damage_tracker.frame().damage_line(damage);
+        self.damage_tracker.next_frame().damage_line(damage);
+
+        let colors = &config.colors;
+        let fg = colors.line_indicator.foreground.unwrap_or(colors.primary.background);
+        let bg = colors.line_indicator.background.unwrap_or(colors.primary.foreground);
+
+        if obstructed_column.is_none_or(|obstructed_column| obstructed_column < column) {
+            self.wgpu_renderer.draw_string(
+                point,
+                fg,
+                bg,
+                text.chars(),
+                &self.size_info,
+                &mut self.glyph_cache,
+                encoder,
+                view,
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn wgpu_draw_ime_preview(
+        &mut self,
+        point: Point<usize>,
+        fg: Rgb,
+        bg: Rgb,
+        rects: &mut Vec<RenderRect>,
+        config: &UiConfig,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+    ) {
+        let preedit = match self.ime.preedit() {
+            Some(preedit) => preedit,
+            None => {
+                self.window.update_ime_position(point, &self.size_info);
+                return;
+            },
+        };
+
+        let num_cols = self.size_info.columns();
+        let visible_text: String = match (preedit.cursor_byte_offset, preedit.cursor_end_offset) {
+            (Some(byte_offset), Some(end_offset)) if end_offset.0 > num_cols => StrShortener::new(
+                &preedit.text[byte_offset.0..],
+                num_cols,
+                ShortenDirection::Right,
+                Some(SHORTENER),
+            ),
+            _ => {
+                StrShortener::new(&preedit.text, num_cols, ShortenDirection::Left, Some(SHORTENER))
+            },
+        }
+        .collect();
+
+        let visible_len = visible_text.chars().count();
+        let end = cmp::min(point.column.0 + visible_len, num_cols);
+        let start = end.saturating_sub(visible_len);
+        let start = Point::new(point.line, Column(start));
+        let end = Point::new(point.line, Column(end - 1));
+        let metrics = self.glyph_cache.font_metrics();
+
+        self.wgpu_renderer.draw_string(
+            start,
+            fg,
+            bg,
+            visible_text.chars(),
+            &self.size_info,
+            &mut self.glyph_cache,
+            encoder,
+            view,
+        );
+
+        if point.line < self.size_info.screen_lines() {
+            let damage = LineDamageBounds::new(start.line, 0, num_cols);
+            self.damage_tracker.frame().damage_line(damage);
+            self.damage_tracker.next_frame().damage_line(damage);
+        }
+
+        let underline = RenderLine { start, end, color: fg };
+        rects.extend(underline.rects(Flags::UNDERLINE, &metrics, &self.size_info));
+
+        let ime_popup_point = match preedit.cursor_end_offset {
+            Some(cursor_end_offset) => {
+                let (shape, width) = if let Some(width) =
+                    NonZeroU32::new((cursor_end_offset.0 - cursor_end_offset.1) as u32)
+                {
+                    (CursorShape::HollowBlock, width)
+                } else {
+                    (CursorShape::Beam, NonZeroU32::new(1).unwrap())
+                };
+                let cursor_column = Column(
+                    (end.column.0 as isize - cursor_end_offset.0 as isize + 1).max(0) as usize,
+                );
+                let cursor_point = Point::new(point.line, cursor_column);
+                let cursor = RenderableCursor::new(cursor_point, shape, fg, width);
+                rects.extend(cursor.rects(&self.size_info, config.cursor.thickness()));
+                cursor_point
+            },
+            _ => end,
+        };
+
+        self.window.update_ime_position(ime_popup_point, &self.size_info);
+    }
+
+    #[cfg(windows)]
+    #[inline(never)]
+    fn wgpu_draw_hyperlink_preview(
+        &mut self,
+        config: &UiConfig,
+        cursor_point: Option<Point>,
+        display_offset: usize,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+    ) {
+        let num_cols = self.size_info.columns();
+        let uris: Vec<_> = self
+            .highlighted_hint
+            .iter()
+            .chain(&self.vi_highlighted_hint)
+            .filter_map(|hint| hint.hyperlink().map(|hyperlink| hyperlink.uri()))
+            .map(|uri| StrShortener::new(uri, num_cols, ShortenDirection::Right, Some(SHORTENER)))
+            .collect();
+
+        if uris.is_empty() {
+            return;
+        }
+
+        let max_protected_lines = uris.len() * 2;
+        let mut protected_lines = Vec::with_capacity(max_protected_lines);
+        if self.size_info.screen_lines() > max_protected_lines {
+            protected_lines.push(self.hint_mouse_point.map(|point| point.line));
+            protected_lines.push(cursor_point.map(|point| point.line));
+        }
+
+        let viewport_bottom = self.size_info.bottommost_line() - Line(display_offset as i32);
+        let viewport_top = viewport_bottom - (self.size_info.screen_lines() - 1);
+        let uri_lines = (viewport_top.0..=viewport_bottom.0)
+            .rev()
+            .map(|line| Some(Line(line)))
+            .filter_map(|line| {
+                if protected_lines.contains(&line) {
+                    None
+                } else {
+                    protected_lines.push(line);
+                    line
+                }
+            })
+            .take(uris.len())
+            .flat_map(|line| term::point_to_viewport(display_offset, Point::new(line, Column(0))));
+
+        let fg = config.colors.footer_bar_foreground();
+        let bg = config.colors.footer_bar_background();
+        for (uri, point) in uris.into_iter().zip(uri_lines) {
+            let damage = LineDamageBounds::new(point.line, point.column.0, num_cols);
+            self.damage_tracker.frame().damage_line(damage);
+            self.damage_tracker.next_frame().damage_line(damage);
+
+            self.wgpu_renderer.draw_string(
+                point,
+                fg,
+                bg,
+                uri,
+                &self.size_info,
+                &mut self.glyph_cache,
+                encoder,
+                view,
+            );
+        }
     }
 
     /// Update the mouse/vi mode cursor hint highlighting.
@@ -1125,6 +1912,7 @@ impl Display {
         dirty
     }
 
+    #[cfg(not(windows))]
     #[inline(never)]
     fn draw_ime_preview(
         &mut self,
@@ -1240,6 +2028,7 @@ impl Display {
     }
 
     /// Draw preview for the currently highlighted `Hyperlink`.
+    #[cfg(not(windows))]
     #[inline(never)]
     fn draw_hyperlink_preview(
         &mut self,
@@ -1304,6 +2093,7 @@ impl Display {
     }
 
     /// Draw current search regex.
+    #[cfg(not(windows))]
     #[inline(never)]
     fn draw_search(&mut self, config: &UiConfig, text: &str) {
         // Assure text length is at least num_cols.
@@ -1326,6 +2116,7 @@ impl Display {
     }
 
     /// Draw render timer.
+    #[cfg(not(windows))]
     #[inline(never)]
     fn draw_render_timer(&mut self, config: &UiConfig) {
         if !config.debug.render_timer {
@@ -1347,6 +2138,7 @@ impl Display {
     }
 
     /// Draw an indicator for the position of a line in history.
+    #[cfg(not(windows))]
     #[inline(never)]
     fn draw_line_indicator(
         &mut self,
@@ -1379,6 +2171,7 @@ impl Display {
     /// Highlight damaged rects.
     ///
     /// This function is for debug purposes only.
+    #[cfg(not(windows))]
     fn highlight_damage(&self, render_rects: &mut Vec<RenderRect>) {
         for damage_rect in &self.damage_tracker.shape_frame_damage(self.size_info.into()) {
             let x = damage_rect.x as f32;
@@ -1458,6 +2251,7 @@ impl Display {
     }
 }
 
+#[cfg(not(windows))]
 impl Drop for Display {
     fn drop(&mut self) {
         // Switch OpenGL context before dropping, otherwise objects (like programs) from other

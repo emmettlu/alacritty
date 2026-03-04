@@ -1,0 +1,19 @@
+[build]
+rustflags = [
+    "-C", "target-cpu=znver3"
+]
+[target.x86_64-pc-windows-msvc]
+rustflags = [
+    "--cfg", "windows_slim_errors"
+]
+[target.x86_64-unknown-linux-gnu]
+rustflags = [
+]
+
+[profile.release]
+codegen-units = 1
+debug = false
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

@@ -1,6 +1,7 @@
 //! Process window events.
 
 use crate::ConfigMonitor;
+#[cfg(not(windows))]
 use glutin::config::GetGlConfig;
 use std::borrow::Cow;
 use std::cmp::min;
@@ -22,7 +23,9 @@ use std::{env, f32, mem};
 
 use ahash::RandomState;
 use crossfont::Size as FontSize;
+#[cfg(not(windows))]
 use glutin::config::Config as GlutinConfig;
+#[cfg(not(windows))]
 use glutin::display::GetGlDisplay;
 use log::{debug, error, info, warn};
 use winit::application::ApplicationHandler;
@@ -93,6 +96,7 @@ pub struct Processor {
     initial_window_error: Option<Box<dyn Error>>,
     windows: HashMap<WindowId, WindowContext, RandomState>,
     proxy: EventLoopProxy<Event>,
+    #[cfg(not(windows))]
     gl_config: Option<GlutinConfig>,
     #[cfg(unix)]
     global_ipc_options: ParsedOptions,
@@ -134,6 +138,7 @@ impl Processor {
             cli_options,
             proxy,
             scheduler,
+            #[cfg(not(windows))]
             gl_config: None,
             config: Rc::new(config),
             clipboard,
@@ -146,8 +151,9 @@ impl Processor {
 
     /// Create initial window and load GL platform.
     ///
-    /// This will initialize the OpenGL Api and pick a config that
+    /// This will initialize the graphics API and pick a config that
     /// will be used for the rest of the windows.
+    #[cfg(not(windows))]
     pub fn create_initial_window(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -166,7 +172,27 @@ impl Processor {
         Ok(())
     }
 
-    /// Create a new terminal window.
+    /// Create initial window (wgpu / Windows).
+    #[cfg(windows)]
+    pub fn create_initial_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_options: WindowOptions,
+    ) -> Result<(), Box<dyn Error>> {
+        let window_context = WindowContext::initial(
+            event_loop,
+            self.proxy.clone(),
+            self.config.clone(),
+            window_options,
+        )?;
+
+        self.windows.insert(window_context.id(), window_context);
+
+        Ok(())
+    }
+
+    /// Create a new terminal window (OpenGL).
+    #[cfg(not(windows))]
     pub fn create_window(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -183,6 +209,30 @@ impl Processor {
 
         let window_context = WindowContext::additional(
             gl_config,
+            event_loop,
+            self.proxy.clone(),
+            config,
+            options,
+            config_overrides,
+        )?;
+
+        self.windows.insert(window_context.id(), window_context);
+        Ok(())
+    }
+
+    /// Create a new terminal window (wgpu / Windows).
+    #[cfg(windows)]
+    pub fn create_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        options: WindowOptions,
+    ) -> Result<(), Box<dyn Error>> {
+        // Override config with CLI/IPC options.
+        let mut config_overrides = options.config_overrides();
+        let mut config = self.config.clone();
+        config = config_overrides.override_config_rc(config);
+
+        let window_context = WindowContext::additional(
             event_loop,
             self.proxy.clone(),
             config,
@@ -379,7 +429,7 @@ impl ApplicationHandler<Event> for Processor {
                     window_context.display.make_not_current();
                 }
 
-                if self.gl_config.is_none() {
+                if self.windows.is_empty() {
                     // Handle initial window creation in daemon mode.
                     if let Err(err) = self.create_initial_window(event_loop, options) {
                         self.initial_window_error = Some(err);
@@ -491,6 +541,7 @@ impl ApplicationHandler<Event> for Processor {
             info!("Exiting the event loop");
         }
 
+        #[cfg(not(windows))]
         match self.gl_config.take().map(|config| config.display()) {
             #[cfg(not(target_os = "macos"))]
             Some(glutin::display::Display::Egl(display)) => {

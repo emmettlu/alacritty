@@ -10,7 +10,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
+#[cfg(not(windows))]
 use glutin::config::Config as GlutinConfig;
+#[cfg(not(windows))]
 use glutin::display::GetGlDisplay;
 #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
 use glutin::platform::x11::X11GlConfigExt;
@@ -18,6 +20,7 @@ use log::info;
 use serde_json as json;
 use winit::event::{Event as WinitEvent, Modifiers, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
+#[cfg(not(windows))]
 use winit::raw_window_handle::HasDisplayHandle;
 use winit::window::WindowId;
 
@@ -38,10 +41,13 @@ use crate::display::window::Window;
 use crate::event::{
     ActionContext, Event, EventProxy, InlineSearchState, Mouse, SearchState, TouchPurpose,
 };
+#[cfg(windows)]
+use crate::input;
 #[cfg(unix)]
 use crate::logging::LOG_TARGET_IPC_CONFIG;
 use crate::message_bar::MessageBuffer;
 use crate::scheduler::Scheduler;
+#[cfg(not(windows))]
 use crate::{input, renderer};
 
 /// Event context for one individual Alacritty window.
@@ -70,7 +76,58 @@ pub struct WindowContext {
 }
 
 impl WindowContext {
-    /// Create initial window context that does bootstrapping the graphics API we're going to use.
+    // ==========================================================================
+    // Windows (wgpu) - 初始窗口创建
+    // ==========================================================================
+    #[cfg(windows)]
+    pub fn initial(
+        event_loop: &ActiveEventLoop,
+        proxy: EventLoopProxy<Event>,
+        config: Rc<UiConfig>,
+        mut options: WindowOptions,
+    ) -> Result<Self, Box<dyn Error>> {
+        let mut identity = config.window.identity.clone();
+        options.window_identity.override_identity_config(&mut identity);
+
+        let window = Window::new(event_loop, &config, &identity, &mut options)?;
+
+        let display = Display::new(window, &config)?;
+
+        Self::new(display, config, options, proxy)
+    }
+
+    // ==========================================================================
+    // Windows (wgpu) - 额外窗口创建
+    // ==========================================================================
+    #[cfg(windows)]
+    pub fn additional(
+        event_loop: &ActiveEventLoop,
+        proxy: EventLoopProxy<Event>,
+        config: Rc<UiConfig>,
+        mut options: WindowOptions,
+        config_overrides: ParsedOptions,
+    ) -> Result<Self, Box<dyn Error>> {
+        let mut identity = config.window.identity.clone();
+        options.window_identity.override_identity_config(&mut identity);
+
+        let window = Window::new(event_loop, &config, &identity, &mut options)?;
+
+        let display = Display::new(window, &config)?;
+
+        let mut window_context = Self::new(display, config, options, proxy)?;
+
+        // 在启动时设置配置覆盖.
+        //
+        // 这些已经应用到 `config`, 所以不需要更新.
+        window_context.window_config = config_overrides;
+
+        Ok(window_context)
+    }
+
+    // ==========================================================================
+    // 非 Windows (OpenGL) - 初始窗口创建
+    // ==========================================================================
+    #[cfg(not(windows))]
     pub fn initial(
         event_loop: &ActiveEventLoop,
         proxy: EventLoopProxy<Event>,
@@ -84,12 +141,6 @@ impl WindowContext {
 
         // Windows has different order of GL platform initialization compared to any other platform;
         // it requires the window first.
-        #[cfg(windows)]
-        let window = Window::new(event_loop, &config, &identity, &mut options)?;
-        #[cfg(windows)]
-        let raw_window_handle = Some(window.raw_window_handle());
-
-        #[cfg(not(windows))]
         let raw_window_handle = None;
 
         let gl_display = renderer::platform::create_gl_display(
@@ -99,7 +150,6 @@ impl WindowContext {
         )?;
         let gl_config = renderer::platform::pick_gl_config(&gl_display, raw_window_handle)?;
 
-        #[cfg(not(windows))]
         let window = Window::new(
             event_loop,
             &config,
@@ -118,7 +168,10 @@ impl WindowContext {
         Self::new(display, config, options, proxy)
     }
 
-    /// Create additional context with the graphics platform other windows are using.
+    // ==========================================================================
+    // 非 Windows (OpenGL) - 额外窗口创建
+    // ==========================================================================
+    #[cfg(not(windows))]
     pub fn additional(
         gl_config: &GlutinConfig,
         event_loop: &ActiveEventLoop,

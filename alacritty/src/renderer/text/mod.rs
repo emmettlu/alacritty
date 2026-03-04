@@ -1,30 +1,45 @@
 use bitflags::bitflags;
+#[cfg(not(windows))]
 use crossfont::{GlyphKey, RasterizedGlyph};
 
+#[cfg(not(windows))]
 use alacritty_terminal::term::cell::Flags;
 
+#[cfg(not(windows))]
 use crate::display::SizeInfo;
+#[cfg(not(windows))]
 use crate::display::content::RenderableCell;
+#[cfg(not(windows))]
 use crate::gl;
+#[cfg(not(windows))]
 use crate::gl::types::*;
 
+#[cfg(not(windows))]
 mod atlas;
-mod builtin_font;
+pub(crate) mod builtin_font;
+#[cfg(not(windows))]
 mod gles2;
+#[cfg(not(windows))]
 mod glsl3;
+#[cfg(not(windows))]
 pub mod glyph_cache;
 
+#[cfg(not(windows))]
 use atlas::Atlas;
+#[cfg(not(windows))]
 pub use gles2::Gles2Renderer;
+#[cfg(not(windows))]
 pub use glsl3::Glsl3Renderer;
+#[cfg(not(windows))]
 pub use glyph_cache::GlyphCache;
+#[cfg(not(windows))]
 use glyph_cache::{Glyph, LoadGlyph};
 
 // NOTE: These flags must be in sync with their usage in the text.*.glsl shaders.
 bitflags! {
     #[repr(C)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    struct RenderingGlyphFlags: u8 {
+    pub(crate) struct RenderingGlyphFlags: u8 {
         const COLORED   = 0b0000_0001;
         const WIDE_CHAR = 0b0000_0010;
     }
@@ -32,7 +47,8 @@ bitflags! {
 
 /// Rendering passes, for both GLES2 and GLSL3 renderer.
 #[repr(u8)]
-enum RenderingPass {
+#[cfg(not(windows))]
+pub(crate) enum RenderingPass {
     /// Rendering pass used to render background color in text shaders.
     Background = 0,
 
@@ -46,6 +62,7 @@ enum RenderingPass {
     SubpixelPass3 = 3,
 }
 
+#[cfg(not(windows))]
 pub trait TextRenderer<'a> {
     type Shader: TextShader;
     type RenderBatch: TextRenderBatch;
@@ -94,6 +111,7 @@ pub trait TextRenderer<'a> {
     }
 }
 
+#[cfg(not(windows))]
 pub trait TextRenderBatch {
     /// Check if `Batch` is empty.
     fn is_empty(&self) -> bool;
@@ -108,6 +126,7 @@ pub trait TextRenderBatch {
     fn add_item(&mut self, cell: &RenderableCell, glyph: &Glyph, size_info: &SizeInfo);
 }
 
+#[cfg(not(windows))]
 pub trait TextRenderApi<T: TextRenderBatch>: LoadGlyph {
     /// Get `Batch` the api is using.
     fn batch(&mut self) -> &mut T;
@@ -172,6 +191,7 @@ pub trait TextRenderApi<T: TextRenderBatch>: LoadGlyph {
     }
 }
 
+#[cfg(not(windows))]
 pub trait TextShader {
     fn id(&self) -> GLuint;
 
@@ -179,13 +199,15 @@ pub trait TextShader {
     fn projection_uniform(&self) -> GLint;
 }
 
+#[cfg(not(windows))]
 #[derive(Debug)]
 pub struct LoaderApi<'a> {
-    active_tex: &'a mut GLuint,
-    atlas: &'a mut Vec<Atlas>,
-    current_atlas: &'a mut usize,
+    pub(crate) active_tex: &'a mut GLuint,
+    pub(crate) atlas: &'a mut Vec<Atlas>,
+    pub(crate) current_atlas: &'a mut usize,
 }
 
+#[cfg(not(windows))]
 impl LoadGlyph for LoaderApi<'_> {
     fn load_glyph(&mut self, rasterized: &RasterizedGlyph) -> Glyph {
         Atlas::load_glyph(self.active_tex, self.atlas, self.current_atlas, rasterized)
@@ -196,6 +218,7 @@ impl LoadGlyph for LoaderApi<'_> {
     }
 }
 
+#[cfg(not(windows))]
 fn update_projection(u_projection: GLint, size: &SizeInfo) {
     let width = size.width();
     let height = size.height();

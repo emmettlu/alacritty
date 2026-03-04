@@ -48,6 +48,7 @@ mod scheduler;
 mod string;
 mod window_context;
 
+#[cfg(not(windows))]
 mod gl {
     #![allow(clippy::all, unsafe_op_in_unsafe_fn)]
     include!(concat!(env!("OUT_DIR"), "/gl_bindings.rs"));

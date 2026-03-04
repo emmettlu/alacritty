@@ -217,6 +217,7 @@ impl Window {
         })
     }
 
+    #[cfg(not(windows))]
     #[inline]
     pub fn raw_window_handle(&self) -> RawWindowHandle {
         self.window.window_handle().unwrap().as_raw()
@@ -366,6 +367,11 @@ impl Window {
 
     pub fn id(&self) -> WindowId {
         self.window.id()
+    }
+
+    /// 获取底层 winit 窗口的引用 (wgpu 创建 surface 时需要).
+    pub fn winit_window(&self) -> &WinitWindow {
+        &self.window
     }
 
     pub fn set_transparent(&self, transparent: bool) {

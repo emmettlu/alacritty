@@ -1,53 +1,96 @@
+#[cfg(not(windows))]
 use std::borrow::Cow;
+#[cfg(not(windows))]
 use std::collections::HashSet;
-use std::ffi::{CStr, CString};
-use std::sync::OnceLock;
+#[cfg(not(windows))]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(not(windows))]
 use std::{fmt, ptr};
 
+#[cfg(not(windows))]
 use ahash::RandomState;
+#[cfg(not(windows))]
 use crossfont::Metrics;
-use glutin::context::{ContextApi, GlContext, PossiblyCurrentContext};
-use glutin::display::{GetGlDisplay, GlDisplay};
+#[cfg(not(windows))]
 use log::{LevelFilter, debug, info};
+#[cfg(not(windows))]
 use unicode_width::UnicodeWidthChar;
 
+#[cfg(not(windows))]
 use alacritty_terminal::index::Point;
+#[cfg(not(windows))]
 use alacritty_terminal::term::cell::Flags;
 
-use crate::config::debug::RendererPreference;
+#[cfg(not(windows))]
 use crate::display::SizeInfo;
+#[cfg(not(windows))]
 use crate::display::color::Rgb;
+#[cfg(not(windows))]
 use crate::display::content::RenderableCell;
+#[cfg(not(windows))]
+use crate::renderer::rects::RenderRect;
+
+use std::fmt;
+
+// OpenGL 模块 - 仅在非 Windows 平台时使用
+#[cfg(not(windows))]
+use std::ffi::{CStr, CString};
+#[cfg(not(windows))]
+use std::sync::OnceLock;
+
+#[cfg(not(windows))]
+use glutin::context::{ContextApi, GlContext, PossiblyCurrentContext};
+#[cfg(not(windows))]
+use glutin::display::{GetGlDisplay, GlDisplay};
+
+#[cfg(not(windows))]
+use crate::config::debug::RendererPreference;
+#[cfg(not(windows))]
 use crate::gl;
-use crate::renderer::rects::{RectRenderer, RenderRect};
+#[cfg(not(windows))]
 use crate::renderer::shader::ShaderError;
 
+#[cfg(not(windows))]
 pub mod platform;
 pub mod rects;
+#[cfg(not(windows))]
 mod shader;
-mod text;
+pub(crate) mod text;
 
+#[cfg(windows)]
+pub mod wgpu_backend;
+
+// 条件导出: Windows 上使用 wgpu 后端的 GlyphCache
+#[cfg(windows)]
+pub use wgpu_backend::GlyphCache;
+
+// 非 Windows 上使用 OpenGL 后端的 GlyphCache / LoaderApi
+#[cfg(not(windows))]
 pub use text::{GlyphCache, LoaderApi};
 
+#[cfg(not(windows))]
 use shader::ShaderVersion;
+#[cfg(not(windows))]
 use text::{Gles2Renderer, Glsl3Renderer, TextRenderer};
 
-/// Whether the OpenGL functions have been loaded.
+/// OpenGL 函数是否已加载.
+#[cfg(not(windows))]
 pub static GL_FUNS_LOADED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug)]
 pub enum Error {
-    /// Shader error.
+    /// 着色器错误.
+    #[cfg(not(windows))]
     Shader(ShaderError),
 
-    /// Other error.
+    /// 其他错误.
     Other(String),
 }
 
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            #[cfg(not(windows))]
             Error::Shader(err) => err.source(),
             Error::Other(_) => None,
         }
@@ -57,6 +100,7 @@ impl std::error::Error for Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            #[cfg(not(windows))]
             Error::Shader(err) => {
                 write!(f, "There was an error initializing the shaders: {err}")
             },
@@ -67,6 +111,7 @@ impl fmt::Display for Error {
     }
 }
 
+#[cfg(not(windows))]
 impl From<ShaderError> for Error {
     fn from(val: ShaderError) -> Self {
         Error::Shader(val)
@@ -79,20 +124,31 @@ impl From<String> for Error {
     }
 }
 
+// ============================================================
+// 以下为 OpenGL 渲染器 (非 Windows 平台)
+// ============================================================
+
+// ============================================================
+// OpenGL 渲染器 (非 Windows 平台)
+// ============================================================
+
+#[cfg(not(windows))]
 #[derive(Debug)]
 enum TextRendererProvider {
     Gles2(Gles2Renderer),
     Glsl3(Glsl3Renderer),
 }
 
+#[cfg(not(windows))]
 #[derive(Debug)]
 pub struct Renderer {
     text_renderer: TextRendererProvider,
-    rect_renderer: RectRenderer,
+    rect_renderer: rects::RectRenderer,
     robustness: bool,
 }
 
-/// Wrapper around gl::GetString with error checking and reporting.
+#[cfg(not(windows))]
+/// gl::GetString 的包装, 带错误检查和报告.
 fn gl_get_string(
     string_id: gl::types::GLenum,
     description: &str,
@@ -111,17 +167,17 @@ fn gl_get_string(
     }
 }
 
+#[cfg(not(windows))]
 impl Renderer {
-    /// Create a new renderer.
+    /// 创建新的渲染器.
     ///
-    /// This will automatically pick between the GLES2 and GLSL3 renderer based on the GPU's
-    /// supported OpenGL version.
+    /// 根据 GPU 支持的 OpenGL 版本自动选择 GLES2 或 GLSL3 渲染器.
     pub fn new(
         context: &PossiblyCurrentContext,
         renderer_preference: Option<RendererPreference>,
     ) -> Result<Self, Error> {
-        // We need to load OpenGL functions once per instance, but only after we make our context
-        // current due to WGL limitations.
+        // 每个实例需要加载一次 OpenGL 函数, 但只在使 context 成为当前状态之后
+        // (由于 WGL 的限制).
         if !GL_FUNS_LOADED.swap(true, Ordering::Relaxed) {
             let gl_display = context.display();
             gl::load_with(|symbol| {
@@ -137,12 +193,12 @@ impl Renderer {
         info!("Running on {renderer}");
         info!("OpenGL version {gl_version}, shader_version {shader_version}");
 
-        // Check if robustness is supported.
+        // 检查是否支持 robustness.
         let robustness = Self::supports_robustness();
 
         let is_gles_context = matches!(context.context_api(), ContextApi::Gles(_));
 
-        // Use the config option to enforce a particular renderer configuration.
+        // 使用配置选项强制使用特定的渲染器配置.
         let (use_glsl3, allow_dsb) = match renderer_preference {
             Some(RendererPreference::Glsl3) => (true, true),
             Some(RendererPreference::Gles2) => (false, true),
@@ -152,16 +208,16 @@ impl Renderer {
 
         let (text_renderer, rect_renderer) = if use_glsl3 {
             let text_renderer = TextRendererProvider::Glsl3(Glsl3Renderer::new()?);
-            let rect_renderer = RectRenderer::new(ShaderVersion::Glsl3)?;
+            let rect_renderer = rects::RectRenderer::new(ShaderVersion::Glsl3)?;
             (text_renderer, rect_renderer)
         } else {
             let text_renderer =
                 TextRendererProvider::Gles2(Gles2Renderer::new(allow_dsb, is_gles_context)?);
-            let rect_renderer = RectRenderer::new(ShaderVersion::Gles2)?;
+            let rect_renderer = rects::RectRenderer::new(ShaderVersion::Gles2)?;
             (text_renderer, rect_renderer)
         };
 
-        // Enable debug logging for OpenGL as well.
+        // 为 OpenGL 启用调试日志.
         if log::max_level() >= LevelFilter::Debug && GlExtensions::contains("GL_KHR_debug") {
             debug!("Enabled debug logging for OpenGL");
             unsafe {
@@ -190,8 +246,7 @@ impl Renderer {
         }
     }
 
-    /// Draw a string in a variable location. Used for printing the render timer, warnings and
-    /// errors.
+    /// 在变化的位置绘制字符串. 用于打印渲染计时器, 警告和错误.
     pub fn draw_string(
         &mut self,
         point: Point<usize>,
@@ -207,7 +262,7 @@ impl Renderer {
                 wide_char_spacer = false;
                 return None;
             } else if character.width() == Some(2) {
-                // The spacer is always following the wide char.
+                // spacer 总是跟在宽字符后面.
                 wide_char_spacer = true;
                 Flags::WIDE_CHAR
             } else {
@@ -239,32 +294,32 @@ impl Renderer {
         }
     }
 
-    /// Draw all rectangles simultaneously to prevent excessive program swaps.
+    /// 同时绘制所有矩形, 以防止过多的程序切换.
     pub fn draw_rects(&mut self, size_info: &SizeInfo, metrics: &Metrics, rects: Vec<RenderRect>) {
         if rects.is_empty() {
             return;
         }
 
-        // Prepare rect rendering state.
+        // 准备矩形渲染状态.
         unsafe {
-            // Remove padding from viewport.
+            // 从 viewport 中移除 padding.
             gl::Viewport(0, 0, size_info.width() as i32, size_info.height() as i32);
             gl::BlendFuncSeparate(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA, gl::SRC_ALPHA, gl::ONE);
         }
 
         self.rect_renderer.draw(size_info, metrics, rects);
 
-        // Activate regular state again.
+        // 恢复常规状态.
         unsafe {
-            // Reset blending strategy.
+            // 重置混合策略.
             gl::BlendFunc(gl::SRC1_COLOR, gl::ONE_MINUS_SRC1_COLOR);
 
-            // Restore viewport with padding.
+            // 恢复带 padding 的 viewport.
             self.set_viewport(size_info);
         }
     }
 
-    /// Fill the window with `color` and `alpha`.
+    /// 使用 `color` 和 `alpha` 填充窗口.
     pub fn clear(&self, color: Rgb, alpha: f32) {
         unsafe {
             gl::ClearColor(
@@ -277,9 +332,9 @@ impl Renderer {
         }
     }
 
-    /// Get the context reset status.
+    /// 获取上下文重置状态.
     pub fn was_context_reset(&self) -> bool {
-        // If robustness is not supported, don't use its functions.
+        // 如果不支持 robustness, 不使用其函数.
         if !self.robustness {
             return false;
         }
@@ -326,7 +381,7 @@ impl Renderer {
         }
     }
 
-    /// Set the viewport for cell rendering.
+    /// 设置单元格渲染的 viewport.
     #[inline]
     pub fn set_viewport(&self, size: &SizeInfo) {
         unsafe {
@@ -339,7 +394,7 @@ impl Renderer {
         }
     }
 
-    /// Resize the renderer.
+    /// 调整渲染器大小.
     pub fn resize(&self, size_info: &SizeInfo) {
         self.set_viewport(size_info);
         match &self.text_renderer {
@@ -349,19 +404,21 @@ impl Renderer {
     }
 }
 
+#[cfg(not(windows))]
 struct GlExtensions;
 
+#[cfg(not(windows))]
 impl GlExtensions {
-    /// Check if the given `extension` is supported.
+    /// 检查给定的 `extension` 是否受支持.
     ///
-    /// This function will lazily load OpenGL extensions.
+    /// 此函数将延迟加载 OpenGL 扩展.
     fn contains(extension: &str) -> bool {
         static OPENGL_EXTENSIONS: OnceLock<HashSet<&'static str, RandomState>> = OnceLock::new();
 
         OPENGL_EXTENSIONS.get_or_init(Self::load_extensions).contains(extension)
     }
 
-    /// Load available OpenGL extensions.
+    /// 加载可用的 OpenGL 扩展.
     fn load_extensions() -> HashSet<&'static str, RandomState> {
         unsafe {
             let extensions = gl::GetString(gl::EXTENSIONS);
@@ -386,6 +443,7 @@ impl GlExtensions {
     }
 }
 
+#[cfg(not(windows))]
 extern "system" fn gl_debug_log(
     _: gl::types::GLenum,
     _: gl::types::GLenum,
