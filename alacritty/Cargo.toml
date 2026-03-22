@@ -3,7 +3,7 @@ name = "alacritty"
 version = "0.17.0-dev"
 authors = ["Christian Duerr <contact@christianduerr.com>", "Joe Wilm <joe@jwilm.com>"]
 license = "Apache-2.0"
-description = "A fast, cross-platform, OpenGL terminal emulator"
+description = "A fast, cross-platform, GPU terminal emulator"
 readme = "README.md"
 homepage = "https://alacritty.org"
 repository = "https://github.com/alacritty/alacritty"
@@ -28,12 +28,12 @@ bitflags = "2.2.1"
 clap = { version = "4.2.7", features = ["derive", "env"] }
 copypasta = { version = "0.10.1", default-features = false }
 crossfont = "0.8.1"
-glutin = { version = "0.32.2", default-features = false, features = ["egl", "wgl"], optional = true }
+dirs = "6.0.0"
 home = "0.5.5"
-libc = "0.2"
 log = { version = "0.4", features = ["std", "serde"] }
 notify = "8.0.0"
 parking_lot = "0.12.0"
+pollster = "0.4"
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9.25"
@@ -41,44 +41,8 @@ tempfile = "3.12.0"
 toml.workspace = true
 toml_edit.workspace = true
 unicode-width = "0.2.0"
+wgpu = { version = "27.0.1", default-features = false, features = ["std", "dx12", "wgsl"] }
 winit = { version = "0.30.9", default-features = false, features = ["rwh_06", "serde"] }
-
-[build-dependencies]
-gl_generator = { version = "0.14.0", optional = true }
-
-[dev-dependencies]
-clap_complete = "4.2.3"
-
-[target.'cfg(not(windows))'.dependencies]
-xdg = "3.0.0"
-
-[target.'cfg(not(target_os = "macos"))'.dependencies]
-png = { version = "0.17.5", default-features = false, optional = true }
-
-[target.'cfg(windows)'.dependencies.wgpu]
-version = "27.0.1"
-default-features = false
-features = ["std", "dx12", "wgsl"]
-
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6.1"
-objc2-foundation = { version = "0.3.1", default-features = false, features = [
-    "std",
-    "NSString",
-    "NSLocale",
-    "NSUserDefaults",
-] }
-objc2-app-kit = { version = "0.3.1", default-features = false, features = [
-    "std",
-    "NSColorSpace",
-    "NSResponder",
-    "NSView",
-    "NSWindow",
-] }
-
-[target.'cfg(windows)'.dependencies]
-pollster = "0.4"
-dirs = "6.0.0"
 bytemuck = { version = "1", features = ["derive"] }
 windows-sys = { version = "0.59", features = [
     "Win32_UI_WindowsAndMessaging",
@@ -87,26 +51,14 @@ windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
 ]}
 
+[dev-dependencies]
+clap_complete = "4.2.3"
+
 [target.'cfg(windows)'.build-dependencies]
 embed-resource = "3.0.2"
 
 [features]
-default = ["wayland", "x11"]
-opengl = ["dep:glutin", "dep:gl_generator"]
-x11 = [
-    "opengl",
-    "copypasta/x11",
-    "winit/x11",
-    "glutin/x11",
-    "glutin/glx",
-    "png",
-]
-wayland = [
-    "opengl",
-    "copypasta/wayland",
-    "glutin/wayland",
-    "winit/wayland",
-    "winit/wayland-dlopen",
-    "winit/wayland-csd-adwaita-crossfont",
-]
+default = []
+x11 = []
+wayland = []
 nightly = []

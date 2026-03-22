@@ -29,30 +29,13 @@ pub struct Options {
     #[clap(long, conflicts_with("daemon"))]
     pub ref_test: bool,
 
-    /// X11 window ID to embed Alacritty within (decimal or hexadecimal with "0x" prefix).
+    /// Window ID to embed Alacritty within (decimal or hexadecimal with "0x" prefix).
     #[clap(long)]
     pub embed: Option<String>,
 
-    /// Specify alternative configuration file [default:
-    /// $XDG_CONFIG_HOME/alacritty/alacritty.toml].
-    #[cfg(not(any(target_os = "macos", windows)))]
-    #[clap(long, value_hint = ValueHint::FilePath)]
-    pub config_file: Option<PathBuf>,
-
     /// Specify alternative configuration file [default: %APPDATA%\alacritty\alacritty.toml].
-    #[cfg(windows)]
     #[clap(long, value_hint = ValueHint::FilePath)]
     pub config_file: Option<PathBuf>,
-
-    /// Specify alternative configuration file [default: $HOME/.config/alacritty/alacritty.toml].
-    #[cfg(target_os = "macos")]
-    #[clap(long, value_hint = ValueHint::FilePath)]
-    pub config_file: Option<PathBuf>,
-
-    /// Path for IPC socket creation.
-    #[cfg(unix)]
-    #[clap(long, value_hint = ValueHint::FilePath)]
-    pub socket: Option<PathBuf>,
 
     /// Reduces the level of verbosity (the min level is -qq).
     #[clap(short, conflicts_with("verbose"), action = ArgAction::Count)]
@@ -70,7 +53,7 @@ pub struct Options {
     #[clap(skip)]
     pub config_options: ParsedOptions,
 
-    /// Options which can be passed via IPC.
+    /// Options which can be passed when creating a new window.
     #[clap(flatten)]
     pub window_options: WindowOptions,
 
@@ -82,20 +65,12 @@ pub struct Options {
 impl Options {
     pub fn new() -> Self {
         let mut options = Self::parse();
-
-        // Parse CLI config overrides.
         options.config_options = options.window_options.config_overrides();
-
         options
     }
 
     /// Override configuration file with options from the CLI.
     pub fn override_config(&mut self, config: &mut UiConfig) {
-        #[cfg(unix)]
-        if self.socket.is_some() {
-            config.ipc_socket = Some(true);
-        }
-
         config.window.embed = self.embed.as_ref().and_then(|embed| parse_hex_or_decimal(embed));
         config.debug.print_events |= self.print_events;
         config.debug.log_level = max(config.debug.log_level, self.log_level());
@@ -105,7 +80,6 @@ impl Options {
             config.debug.log_level = max(config.debug.log_level, LevelFilter::Info);
         }
 
-        // Replace CLI options.
         self.config_options.override_config(config);
     }
 
@@ -133,7 +107,6 @@ impl Options {
 /// Parse the class CLI parameter.
 fn parse_class(input: &str) -> Result<Class, String> {
     let (general, instance) = match input.split_once(',') {
-        // Warn the user if they've passed too many values.
         Some((_, instance)) if instance.contains(',') => {
             return Err(String::from("Too many parameters"));
         },
@@ -144,7 +117,7 @@ fn parse_class(input: &str) -> Result<Class, String> {
     Ok(Class::new(general, instance))
 }
 
-/// Convert to hex if possible, else decimal
+/// Convert to hex if possible, else decimal.
 fn parse_hex_or_decimal(input: &str) -> Option<u32> {
     input
         .strip_prefix("0x")
@@ -152,7 +125,7 @@ fn parse_hex_or_decimal(input: &str) -> Option<u32> {
         .or_else(|| input.parse().ok())
 }
 
-/// Terminal specific cli options which can be passed to new windows via IPC.
+/// Terminal-specific CLI options which can be passed to new windows.
 #[derive(Serialize, Deserialize, Args, Default, Debug, Clone, PartialEq, Eq)]
 pub struct TerminalOptions {
     /// Start the shell in the specified working directory.
@@ -206,24 +179,25 @@ impl From<TerminalOptions> for PtyOptions {
     }
 }
 
-/// Window specific cli options which can be passed to new windows via IPC.
+/// Window identity options.
 #[derive(Serialize, Deserialize, Args, Default, Debug, Clone, PartialEq, Eq)]
 pub struct WindowIdentity {
     /// Defines the window title [default: Alacritty].
     #[clap(short = 'T', short_alias('t'), long)]
     pub title: Option<String>,
 
-    /// Defines window class/app_id on X11/Wayland [default: Alacritty].
-    #[clap(long, value_name = "general> | <general>,<instance", value_parser = parse_class)]
+    /// Defines window class [default: Alacritty].
+    #[clap(long, value_name = "<general> | <general>,<instance>", value_parser = parse_class)]
     pub class: Option<Class>,
 }
 
 impl WindowIdentity {
-    /// Override the [`WindowIdentity`]'s fields with the [`WindowOptions`].
+    /// Override the [`Identity`] fields with values from CLI.
     pub fn override_identity_config(&self, identity: &mut Identity) {
         if let Some(title) = &self.title {
             identity.title.clone_from(title);
         }
+
         if let Some(class) = &self.class {
             identity.class.clone_from(class);
         }
@@ -233,36 +207,7 @@ impl WindowIdentity {
 /// Available CLI subcommands.
 #[derive(Subcommand, Debug)]
 pub enum Subcommands {
-    #[cfg(unix)]
-    Msg(MessageOptions),
     Migrate(MigrateOptions),
-}
-
-/// Send a message to the Alacritty socket.
-#[cfg(unix)]
-#[derive(Args, Debug)]
-pub struct MessageOptions {
-    /// IPC socket connection path override.
-    #[clap(short, long, value_hint = ValueHint::FilePath)]
-    pub socket: Option<PathBuf>,
-
-    /// Message which should be sent.
-    #[clap(subcommand)]
-    pub message: SocketMessage,
-}
-
-/// Available socket messages.
-#[cfg(unix)]
-#[derive(Subcommand, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub enum SocketMessage {
-    /// Create a new window in the same Alacritty process.
-    CreateWindow(WindowOptions),
-
-    /// Update the Alacritty configuration.
-    Config(IpcConfig),
-
-    /// Read runtime Alacritty configuration.
-    GetConfig(IpcGetConfig),
 }
 
 /// Migrate the configuration file.
@@ -284,33 +229,23 @@ pub struct MigrateOptions {
     #[clap(long)]
     pub skip_renames: bool,
 
-    #[clap(short, long)]
     /// Do not output to STDOUT.
+    #[clap(short, long)]
     pub silent: bool,
 }
 
-/// Subset of options that we pass to 'create-window' IPC subcommand.
+/// Subset of options used when creating a new window in-process.
 #[derive(Serialize, Deserialize, Args, Default, Clone, Debug, PartialEq, Eq)]
 pub struct WindowOptions {
-    /// Terminal options which can be passed via IPC.
+    /// Terminal options for the new window.
     #[clap(flatten)]
     pub terminal_options: TerminalOptions,
 
+    /// Window options for the new window.
     #[clap(flatten)]
-    /// Window options which could be passed via IPC.
     pub window_identity: WindowIdentity,
 
-    #[clap(skip)]
-    #[cfg(target_os = "macos")]
-    /// The window tabbing identifier to use when building a window.
-    pub window_tabbing_id: Option<String>,
-
-    #[clap(skip)]
-    #[cfg(not(any(target_os = "macos", windows)))]
-    /// `ActivationToken` that we pass to winit.
-    pub activation_token: Option<String>,
-
-    /// Override configuration file options [example: 'cursor.style="Beam"'].
+    /// Override configuration file options [example: 'cursor.style=\"Beam\"'].
     #[clap(short = 'o', long, num_args = 1..)]
     option: Vec<String>,
 }
@@ -320,36 +255,6 @@ impl WindowOptions {
     pub fn config_overrides(&self) -> ParsedOptions {
         ParsedOptions::from_options(&self.option)
     }
-}
-
-/// Parameters to the `config` IPC subcommand.
-#[cfg(unix)]
-#[derive(Args, Serialize, Deserialize, Default, Debug, Clone, PartialEq, Eq)]
-pub struct IpcConfig {
-    /// Configuration file options [example: 'cursor.style="Beam"'].
-    #[clap(required = true, value_name = "CONFIG_OPTIONS")]
-    pub options: Vec<String>,
-
-    /// Window ID for the new config.
-    ///
-    /// Use `-1` to apply this change to all windows.
-    #[clap(short, long, allow_hyphen_values = true, env = "ALACRITTY_WINDOW_ID")]
-    pub window_id: Option<i128>,
-
-    /// Clear all runtime configuration changes.
-    #[clap(short, long, conflicts_with = "options")]
-    pub reset: bool,
-}
-
-/// Parameters to the `get-config` IPC subcommand.
-#[cfg(unix)]
-#[derive(Args, Serialize, Deserialize, Default, Debug, Clone, PartialEq, Eq)]
-pub struct IpcGetConfig {
-    /// Window ID for the config request.
-    ///
-    /// Use `-1` to get the global config.
-    #[clap(short, long, allow_hyphen_values = true, env = "ALACRITTY_WINDOW_ID")]
-    pub window_id: Option<i128>,
 }
 
 /// Parsed CLI config overrides.
@@ -371,6 +276,7 @@ impl ParsedOptions {
                     continue;
                 },
             };
+
             config_options.push((option.clone(), parsed));
         }
 
@@ -397,15 +303,12 @@ impl ParsedOptions {
 
     /// Apply CLI config overrides to a CoW config.
     pub fn override_config_rc(&mut self, config: Rc<UiConfig>) -> Rc<UiConfig> {
-        // Skip clone without write requirement.
         if self.config_options.is_empty() {
             return config;
         }
 
-        // Override cloned config.
         let mut config = (*config).clone();
         self.override_config(&mut config);
-
         Rc::new(config)
     }
 }
@@ -427,16 +330,6 @@ impl DerefMut for ParsedOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[cfg(target_os = "linux")]
-    use std::fs::File;
-    #[cfg(target_os = "linux")]
-    use std::io::Read;
-
-    #[cfg(target_os = "linux")]
-    use clap::CommandFactory;
-    #[cfg(target_os = "linux")]
-    use clap_complete::Shell;
     use toml::Table;
 
     #[test]
@@ -461,7 +354,6 @@ mod tests {
 
     #[test]
     fn valid_option_as_value() {
-        // Test with a single field.
         let value: Value = toml::from_str("field=true").unwrap();
 
         let mut table = Table::new();
@@ -469,7 +361,6 @@ mod tests {
 
         assert_eq!(value, Value::Table(table));
 
-        // Test with nested fields
         let value: Value = toml::from_str("parent.field=true").unwrap();
 
         let mut parent_table = Table::new();
@@ -532,36 +423,5 @@ mod tests {
     fn invalid_hex_to_decimal() {
         let value = parse_hex_or_decimal("0xa0xx0d");
         assert_eq!(value, None);
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn completions() {
-        let mut clap = Options::command();
-
-        for (shell, file) in &[
-            (Shell::Bash, "alacritty.bash"),
-            (Shell::Fish, "alacritty.fish"),
-            (Shell::Zsh, "_alacritty"),
-        ] {
-            let mut generated = Vec::new();
-            clap_complete::generate(*shell, &mut clap, "alacritty", &mut generated);
-            let generated = String::from_utf8_lossy(&generated);
-
-            let mut completion = String::new();
-            let mut file = File::open(format!("../extra/completions/{file}")).unwrap();
-            file.read_to_string(&mut completion).unwrap();
-
-            assert_eq!(generated, completion);
-        }
-
-        // NOTE: Use this to generate new completions.
-        //
-        // let mut file = File::create("../extra/completions/alacritty.bash").unwrap();
-        // clap_complete::generate(Shell::Bash, &mut clap, "alacritty", &mut file);
-        // let mut file = File::create("../extra/completions/alacritty.fish").unwrap();
-        // clap_complete::generate(Shell::Fish, &mut clap, "alacritty", &mut file);
-        // let mut file = File::create("../extra/completions/_alacritty").unwrap();
-        // clap_complete::generate(Shell::Zsh, &mut clap, "alacritty", &mut file);
     }
 }

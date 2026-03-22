@@ -1,16 +1,30 @@
-#[cfg(not(windows))]
+//! Damage tracking for renderer updates (Windows-only path).
+
 use std::iter::Peekable;
 use std::{cmp, mem};
 
-use glutin::surface::Rect;
-
 use alacritty_terminal::index::Point;
 use alacritty_terminal::selection::SelectionRange;
-use alacritty_terminal::term::LineDamageBounds;
-#[cfg(not(windows))]
-use alacritty_terminal::term::TermDamageIterator;
+use alacritty_terminal::term::{LineDamageBounds, TermDamageIterator};
 
 use crate::display::SizeInfo;
+
+/// Internal rectangle type used for damage regions.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Rect {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+impl Rect {
+    #[allow(dead_code)]
+    #[inline]
+    pub const fn new(x: i32, y: i32, width: i32, height: i32) -> Self {
+        Self { x, y, width, height }
+    }
+}
 
 /// State of the damage tracking for the [`Display`].
 ///
@@ -21,7 +35,7 @@ pub struct DamageTracker {
     pub old_vi_cursor: Option<Point<usize>>,
     /// The location of the old selection.
     pub old_selection: Option<SelectionRange>,
-    /// Highlight damage submitted for the compositor.
+    /// Highlight damage submitted for debugging.
     pub debug: bool,
 
     /// The damage for the frames.
@@ -93,7 +107,7 @@ impl DamageTracker {
     }
 
     /// Get shaped frame damage for the active frame.
-    #[cfg(not(windows))]
+    #[allow(dead_code)]
     pub fn shape_frame_damage(&self, size_info: SizeInfo<u32>) -> Vec<Rect> {
         if self.frames[0].full {
             vec![Rect::new(0, 0, size_info.width() as i32, size_info.height() as i32)]
@@ -146,7 +160,7 @@ pub struct FrameDamage {
     full: bool,
     /// Terminal lines damaged in the given frame.
     lines: Vec<LineDamageBounds>,
-    /// Rectangular regions damage in the given frame.
+    /// Rectangular regions damaged in the given frame.
     rects: Vec<Rect>,
 }
 
@@ -211,20 +225,20 @@ pub fn viewport_y_to_damage_y(size_info: &SizeInfo, y: i32, height: i32) -> i32 
     size_info.height() as i32 - y - height
 }
 
-/// Convert viewport `y` coordinate to [`Rect`] damage coordinate.
-#[cfg(not(windows))]
+/// Convert damage `y` coordinate to viewport coordinate.
+#[allow(dead_code)]
 pub fn damage_y_to_viewport_y(size_info: &SizeInfo, rect: &Rect) -> i32 {
     size_info.height() as i32 - rect.y - rect.height
 }
 
-/// Iterator which converts `alacritty_terminal` damage information into renderer damaged rects.
-#[cfg(not(windows))]
+/// Iterator which converts terminal damage information into damaged rects.
+#[allow(dead_code)]
 struct RenderDamageIterator<'a> {
     damaged_lines: Peekable<TermDamageIterator<'a>>,
     size_info: &'a SizeInfo<u32>,
 }
 
-#[cfg(not(windows))]
+#[allow(dead_code)]
 impl<'a> RenderDamageIterator<'a> {
     pub fn new(damaged_lines: TermDamageIterator<'a>, size_info: &'a SizeInfo<u32>) -> Self {
         Self { damaged_lines: damaged_lines.peekable(), size_info }
@@ -240,7 +254,7 @@ impl<'a> RenderDamageIterator<'a> {
         Rect::new(x as i32, y as i32, width as i32, size_info.cell_height() as i32)
     }
 
-    // Make sure to damage near cells to include wide chars.
+    // Make sure to damage nearby cells to include wide chars.
     #[inline]
     fn overdamage(size_info: &SizeInfo<u32>, mut rect: Rect) -> Rect {
         rect.x = (rect.x - size_info.cell_width() as i32).max(0);
@@ -258,7 +272,7 @@ impl<'a> RenderDamageIterator<'a> {
     }
 }
 
-#[cfg(not(windows))]
+#[allow(dead_code)]
 impl Iterator for RenderDamageIterator<'_> {
     type Item = Rect;
 
@@ -282,23 +296,24 @@ impl Iterator for RenderDamageIterator<'_> {
     }
 }
 
-/// Check if two given [`glutin::surface::Rect`] overlap.
-#[cfg(not(windows))]
+/// Check if two given [`Rect`] overlap.
+#[allow(dead_code)]
+#[inline]
 fn rects_overlap(lhs: Rect, rhs: Rect) -> bool {
     !(
         // `lhs` is left of `rhs`.
         lhs.x + lhs.width < rhs.x
-        // `lhs` is right of `rhs`.
-        || rhs.x + rhs.width < lhs.x
-        // `lhs` is below `rhs`.
-        || lhs.y + lhs.height < rhs.y
-        // `lhs` is above `rhs`.
-        || rhs.y + rhs.height < lhs.y
+            // `lhs` is right of `rhs`.
+            || rhs.x + rhs.width < lhs.x
+            // `lhs` is below `rhs`.
+            || lhs.y + lhs.height < rhs.y
+            // `lhs` is above `rhs`.
+            || rhs.y + rhs.height < lhs.y
     )
 }
 
-/// Merge two [`glutin::surface::Rect`] by producing the smallest rectangle that contains both.
-#[cfg(not(windows))]
+/// Merge two [`Rect`] by producing the smallest rectangle that contains both.
+#[allow(dead_code)]
 #[inline]
 fn merge_rects(lhs: Rect, rhs: Rect) -> Rect {
     let left_x = cmp::min(lhs.x, rhs.x);
