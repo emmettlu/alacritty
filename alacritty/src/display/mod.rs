@@ -26,7 +26,6 @@ use glutin::surface::{Surface, SwapInterval, WindowSurface};
 
 use log::{debug, info};
 use parking_lot::MutexGuard;
-use serde::{Deserialize, Serialize};
 use winit::dpi::PhysicalSize;
 use winit::keyboard::ModifiersState;
 #[cfg(not(windows))]
@@ -172,7 +171,7 @@ impl From<glutin::error::Error> for Error {
 }
 
 /// Terminal size info.
-#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct SizeInfo<T = f32> {
     /// Terminal window width.
     width: T,
