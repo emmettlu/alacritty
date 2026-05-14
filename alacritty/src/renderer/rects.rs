@@ -4,8 +4,8 @@
 
 use std::collections::HashMap;
 
-use ahash::RandomState;
 use crossfont::Metrics;
+use rustc_hash::FxBuildHasher;
 
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Point};
@@ -171,7 +171,7 @@ impl RenderLine {
 /// Lines for underline and strikeout.
 #[derive(Default)]
 pub struct RenderLines {
-    inner: HashMap<Flags, Vec<RenderLine>, RandomState>,
+    inner: HashMap<Flags, Vec<RenderLine>, FxBuildHasher>,
 }
 
 impl RenderLines {

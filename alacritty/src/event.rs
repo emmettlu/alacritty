@@ -3,8 +3,8 @@
 use crate::ConfigMonitor;
 use std::borrow::Cow;
 use std::cmp::min;
+use std::collections::VecDeque;
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet, VecDeque};
 use std::error::Error;
 use std::ffi::OsStr;
 use std::fmt::Debug;
@@ -17,9 +17,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{env, f32, mem};
 
-use ahash::RandomState;
 use crossfont::Size as FontSize;
 use log::{debug, error, info, warn};
+use rustc_hash::{FxHashMap, FxHashSet};
 use winit::application::ApplicationHandler;
 use winit::event::{
     ElementState, Event as WinitEvent, Ime, Modifiers, MouseButton, StartCause,
@@ -84,7 +84,7 @@ pub struct Processor {
     scheduler: Scheduler,
     initial_window_options: Option<WindowOptions>,
     initial_window_error: Option<Box<dyn Error>>,
-    windows: HashMap<WindowId, WindowContext, RandomState>,
+    windows: FxHashMap<WindowId, WindowContext>,
     proxy: EventLoopProxy<Event>,
     #[cfg(unix)]
     global_ipc_options: ParsedOptions,
@@ -1695,7 +1695,7 @@ pub enum TouchPurpose {
     Zoom(TouchZoom),
     ZoomPendingSlot(TouchEvent),
     Tap(TouchEvent),
-    Invalid(HashSet<u64, RandomState>),
+    Invalid(FxHashSet<u64>),
 }
 
 /// Touch zooming state.

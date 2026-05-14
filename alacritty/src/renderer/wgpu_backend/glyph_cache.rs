@@ -3,12 +3,12 @@
 
 use std::collections::HashMap;
 
-use ahash::RandomState;
 use crossfont::{
     Error as RasterizerError, FontDesc, FontKey, GlyphKey, Metrics, Rasterize, RasterizedGlyph,
     Rasterizer, Size, Slant, Style, Weight,
 };
 use log::{error, info};
+use rustc_hash::FxBuildHasher;
 use unicode_width::UnicodeWidthChar;
 
 use crate::config::font::{Font, FontDescription};
@@ -45,7 +45,7 @@ pub struct Glyph {
 /// 当前仅以 `GlyphKey` 为键, 因此无法保存同一码点的不同表示.
 pub struct GlyphCache {
     /// 已缓存的字形.
-    cache: HashMap<GlyphKey, Glyph, RandomState>,
+    cache: HashMap<GlyphKey, Glyph, FxBuildHasher>,
 
     /// 用于加载新字形的光栅化器.
     rasterizer: Rasterizer,
@@ -105,7 +105,11 @@ impl GlyphCache {
         key: FontKey,
     ) -> Result<Metrics, crossfont::Error> {
         // 在调用 metrics 之前需要至少加载一个字形.
-        rasterizer.get_glyph(GlyphKey { font_key: key, character: 'm', size: font.size() })?;
+        rasterizer.get_glyph(GlyphKey {
+            font_key: key,
+            character: 'm',
+            size: font.size(),
+        })?;
 
         let mut metrics = rasterizer.metrics(key, font.size())?;
         metrics.strikeout_position += font.glyph_offset.y as f32;
@@ -117,7 +121,15 @@ impl GlyphCache {
 
         // 缓存所有 ASCII 字符.
         for i in 32u8..=126u8 {
-            self.get(GlyphKey { font_key: font, character: i as char, size }, loader, true);
+            self.get(
+                GlyphKey {
+                    font_key: font,
+                    character: i as char,
+                    size,
+                },
+                loader,
+                true,
+            );
         }
     }
 
@@ -170,7 +182,7 @@ impl GlyphCache {
                 let fallback_desc =
                     Self::make_desc(Font::default().normal(), Slant::Normal, Weight::Normal);
                 rasterizer.load_font(&fallback_desc, size)
-            },
+            }
         }
     }
 
@@ -214,7 +226,10 @@ impl GlyphCache {
             // 加载缺失字形的备用字形.
             Err(RasterizerError::MissingGlyph(rasterized)) if show_missing => {
                 // 使用 `\0` 作为 "missing" 字形, 只缓存一次.
-                let missing_key = GlyphKey { character: '\0', ..glyph_key };
+                let missing_key = GlyphKey {
+                    character: '\0',
+                    ..glyph_key
+                };
                 if let Some(glyph) = self.cache.get(&missing_key) {
                     *glyph
                 } else {
@@ -223,7 +238,7 @@ impl GlyphCache {
 
                     glyph
                 }
-            },
+            }
             Err(_) => self.load_glyph(loader, Default::default()),
         };
 

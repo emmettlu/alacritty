@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ahash::RandomState;
+use rustc_hash::FxBuildHasher;
 use crossfont::{
     Error as RasterizerError, FontDesc, FontKey, GlyphKey, Metrics, Rasterize, RasterizedGlyph,
     Rasterizer, Size, Slant, Style, Weight,
@@ -45,7 +45,7 @@ pub struct Glyph {
 /// representations of the same code point.
 pub struct GlyphCache {
     /// Cache of buffered glyphs.
-    cache: HashMap<GlyphKey, Glyph, RandomState>,
+    cache: HashMap<GlyphKey, Glyph, FxBuildHasher>,
 
     /// Rasterizer for loading new glyphs.
     rasterizer: Rasterizer,
