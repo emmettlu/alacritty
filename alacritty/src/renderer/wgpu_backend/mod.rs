@@ -611,8 +611,16 @@ impl WgpuRenderer {
         self.sync_atlas_bind_groups();
 
         // -- 背景 pass --
-        self.queue.write_buffer(&self.text_bg_uniform_buffer, 0, bytemuck::bytes_of(&uniforms_bg));
-        self.queue.write_buffer(&self.text_fg_uniform_buffer, 0, bytemuck::bytes_of(&uniforms_fg));
+        self.queue.write_buffer(
+            &self.text_bg_uniform_buffer,
+            0,
+            bytemuck::bytes_of(&uniforms_bg),
+        );
+        self.queue.write_buffer(
+            &self.text_fg_uniform_buffer,
+            0,
+            bytemuck::bytes_of(&uniforms_fg),
+        );
 
         for (atlas_idx, instances) in &instances_by_atlas {
             if instances.is_empty() {
@@ -621,7 +629,8 @@ impl WgpuRenderer {
 
             // 如果实例数超出 buffer 大小, 需要分批
             for chunk in instances.chunks(BATCH_MAX) {
-                self.queue.write_buffer(&self.text_instance_buffer, 0, bytemuck::cast_slice(chunk));
+                self.queue
+                    .write_buffer(&self.text_instance_buffer, 0, bytemuck::cast_slice(chunk));
 
                 let bind_group = &self.atlas_bind_groups[*atlas_idx];
                 {
@@ -719,18 +728,29 @@ impl WgpuRenderer {
         };
         let glyph = glyph_cache.get(glyph_key, &mut loader, true);
         let instance = Self::create_instance(&cell, &glyph);
-        instances_by_atlas.entry(glyph.atlas_index).or_default().push(instance);
+        instances_by_atlas
+            .entry(glyph.atlas_index)
+            .or_default()
+            .push(instance);
 
         // 渲染可见的零宽字符
-        if let Some(zerowidth) =
-            cell.extra.as_mut().and_then(|extra| extra.zerowidth.take().filter(|_| !hidden))
+        if let Some(zerowidth) = cell
+            .extra
+            .as_mut()
+            .and_then(|extra| extra.zerowidth.take().filter(|_| !hidden))
         {
             for character in zerowidth {
-                let glyph_key =
-                    crossfont::GlyphKey { font_key, size: glyph_cache.font_size, character };
+                let glyph_key = crossfont::GlyphKey {
+                    font_key,
+                    size: glyph_cache.font_size,
+                    character,
+                };
                 let glyph = glyph_cache.get(glyph_key, &mut loader, false);
                 let instance = Self::create_instance(&cell, &glyph);
-                instances_by_atlas.entry(glyph.atlas_index).or_default().push(instance);
+                instances_by_atlas
+                    .entry(glyph.atlas_index)
+                    .or_default()
+                    .push(instance);
             }
         }
     }
@@ -939,7 +959,8 @@ impl WgpuRenderer {
                     mapped_at_creation: false,
                 });
             }
-            self.queue.write_buffer(&self.rect_vertex_buffer, 0, vertex_data);
+            self.queue
+                .write_buffer(&self.rect_vertex_buffer, 0, vertex_data);
 
             {
                 let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -972,7 +993,6 @@ impl WgpuRenderer {
         half_height: f32,
         rect: &RenderRect,
     ) {
-        // 计算归一化设备坐标中的矩形顶点位置.
         // NDC 范围从 -1 到 +1, Y 轴向上.
         let x = rect.x / half_width - 1.0;
         let y = -rect.y / half_height + 1.0;
@@ -987,9 +1007,30 @@ impl WgpuRenderer {
         // 两个三角形构成一个四边形
         let quad = [
             RectVertex { x, y, r, g, b, a },
-            RectVertex { x, y: y - height, r, g, b, a },
-            RectVertex { x: x + width, y, r, g, b, a },
-            RectVertex { x: x + width, y: y - height, r, g, b, a },
+            RectVertex {
+                x,
+                y: y - height,
+                r,
+                g,
+                b,
+                a,
+            },
+            RectVertex {
+                x: x + width,
+                y,
+                r,
+                g,
+                b,
+                a,
+            },
+            RectVertex {
+                x: x + width,
+                y: y - height,
+                r,
+                g,
+                b,
+                a,
+            },
         ];
 
         vertices.push(quad[0]);
@@ -1037,7 +1078,13 @@ pub struct WgpuLoaderApi<'a> {
 
 impl LoadGlyph for WgpuLoaderApi<'_> {
     fn load_glyph(&mut self, rasterized: &RasterizedGlyph) -> Glyph {
-        Atlas::load_glyph(self.device, self.queue, self.atlases, self.current_atlas, rasterized)
+        Atlas::load_glyph(
+            self.device,
+            self.queue,
+            self.atlases,
+            self.current_atlas,
+            rasterized,
+        )
     }
 
     fn clear(&mut self) {
@@ -1055,7 +1102,13 @@ struct WgpuGlyphLoader<'a> {
 
 impl LoadGlyph for WgpuGlyphLoader<'_> {
     fn load_glyph(&mut self, rasterized: &RasterizedGlyph) -> Glyph {
-        Atlas::load_glyph(self.device, self.queue, self.atlases, self.current_atlas, rasterized)
+        Atlas::load_glyph(
+            self.device,
+            self.queue,
+            self.atlases,
+            self.current_atlas,
+            rasterized,
+        )
     }
 
     fn clear(&mut self) {

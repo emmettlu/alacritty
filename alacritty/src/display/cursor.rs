@@ -16,8 +16,8 @@ pub trait IntoRects {
 impl IntoRects for RenderableCursor {
     fn rects(self, size_info: &SizeInfo, thickness: f32) -> CursorRects {
         let point = self.point();
-        let x = point.column.0 as f32 * size_info.cell_width() + size_info.padding_x();
-        let y = point.line as f32 * size_info.cell_height() + size_info.padding_y();
+        let x = point.column.0 as f32 * size_info.cell_width();
+        let y = point.line as f32 * size_info.cell_height();
 
         let mut width = size_info.cell_width();
         let height = size_info.cell_height();
@@ -44,7 +44,10 @@ pub struct CursorRects {
 
 impl From<RenderRect> for CursorRects {
     fn from(rect: RenderRect) -> Self {
-        Self { rects: [Some(rect), None, None, None], index: 0 }
+        Self {
+            rects: [Some(rect), None, None, None],
+            index: 0,
+        }
     }
 }
 
@@ -84,7 +87,12 @@ fn hollow(x: f32, y: f32, width: f32, height: f32, thickness: f32, color: Rgb) -
     let right_line = RenderRect::new(right_x, vertical_y, thickness, vertical_height, color, 1.);
 
     CursorRects {
-        rects: [Some(top_line), Some(bottom_line), Some(left_line), Some(right_line)],
+        rects: [
+            Some(top_line),
+            Some(bottom_line),
+            Some(left_line),
+            Some(right_line),
+        ],
         index: 0,
     }
 }
