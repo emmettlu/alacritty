@@ -52,13 +52,6 @@ jobs:
       #     ref: refs/tags/${{ env.PROJECT_VERSION }}
       #     path: ${{ env.PROJECT_PATH }}
 
-      - name: Copy config file
-        shell: bash
-        # working-directory: ${{ env.PROJECT_PATH }}
-        run: |
-          mkdir -p .cargo
-          cp -f ../.cargo/config.toml .cargo
-
       - name: Build
         shell: bash
         # working-directory: ${{ env.PROJECT_PATH }}
