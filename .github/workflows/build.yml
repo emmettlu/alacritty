@@ -42,8 +42,8 @@ jobs:
           arch: x64
           sdk: 10.0.19041.0
 
-      # - name: Checkout self
-      #   uses: actions/checkout@v6
+      - name: Checkout self
+        uses: actions/checkout@v6
 
       # - name: Checkout ${{ env.PROJECT_PATH }}
       #   uses: actions/checkout@v6
