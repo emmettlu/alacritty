@@ -49,6 +49,7 @@ const URL_REGEX: &str = "(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https:
                          [^\u{0000}-\u{001F}\u{007F}-\u{009F}<>\"\\s{-}\\^⟨⟩`\\\\]+";
 
 #[derive(Deserialize, Serialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
 pub struct UiConfig {
     /// Miscellaneous configuration options.
     pub general: General,
@@ -245,6 +246,7 @@ impl UiConfig {
 
 /// Keyboard configuration.
 #[derive(Deserialize, Serialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
 struct Keyboard {
     /// Keybindings.
     #[serde(skip_serializing)]
@@ -303,6 +305,7 @@ where
 
 /// A delta for a point in a 2 dimensional plane.
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(default)]
 pub struct Delta<T: Default> {
     /// Horizontal change.
     pub x: T,
@@ -312,6 +315,7 @@ pub struct Delta<T: Default> {
 
 /// Regex terminal hints.
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct Hints {
     /// Characters for the hint labels.
     alphabet: HintsAlphabet,
@@ -563,6 +567,7 @@ impl fmt::Debug for HintBinding {
 
 /// Hint mouse highlighting.
 #[derive(Deserialize, Serialize, Default, Copy, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct HintMouse {
     /// Hint mouse highlighting availability.
     pub enabled: bool,

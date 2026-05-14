@@ -15,6 +15,7 @@ use crate::config::ui_config::Delta;
 /// each value independently. Alternatively, maybe erroring when the user
 /// doesn't provide complete config is Ok.
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+#[serde(default)]
 pub struct Font {
     /// Extra spacing per character.
     pub offset: Delta<i8>,
@@ -94,6 +95,7 @@ impl Default for Font {
 
 /// Description of the normal font.
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+#[serde(default)]
 pub struct FontDescription {
     pub family: String,
     pub style: Option<String>,
@@ -115,6 +117,7 @@ impl Default for FontDescription {
 
 /// Description of the italic and bold font.
 #[derive(Deserialize, Serialize, Debug, Default, Clone, PartialEq, Eq)]
+#[serde(default)]
 pub struct SecondaryFontDescription {
     family: Option<String>,
     style: Option<String>,

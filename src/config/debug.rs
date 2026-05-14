@@ -1,10 +1,9 @@
 use log::LevelFilter;
 use serde::{Deserialize, Serialize};
 
-
-
 /// Debugging options.
 #[derive(Deserialize, Serialize, Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(default)]
 pub struct Debug {
     pub log_level: LevelFilter,
 

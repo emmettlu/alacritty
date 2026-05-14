@@ -8,6 +8,7 @@ use crate::config::ui_config::Program;
 use crate::display::color::Rgb;
 
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct BellConfig {
     /// Visual bell animation function.
     pub animation: BellAnimation,

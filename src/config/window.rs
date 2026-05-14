@@ -8,8 +8,6 @@ use serde::{Deserialize, Deserializer, Serialize};
 use winit::platform::macos::OptionAsAlt as WinitOptionAsAlt;
 use winit::window::{Fullscreen, Theme as WinitTheme, WindowLevel as WinitWindowLevel};
 
-
-
 use crate::config::LOG_TARGET_CONFIG;
 use crate::config::ui_config::{Delta, Percentage};
 
@@ -17,6 +15,7 @@ use crate::config::ui_config::{Delta, Percentage};
 pub const DEFAULT_NAME: &str = "Alacritty";
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
+#[serde(default)]
 pub struct WindowConfig {
     /// Initial position.
     pub position: Option<Delta<i32>>,
@@ -155,6 +154,7 @@ impl WindowConfig {
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+#[serde(default)]
 pub struct Identity {
     /// Window title.
     pub title: String,
@@ -165,7 +165,10 @@ pub struct Identity {
 
 impl Default for Identity {
     fn default() -> Self {
-        Self { title: DEFAULT_NAME.into(), class: Default::default() }
+        Self {
+            title: DEFAULT_NAME.into(),
+            class: Default::default(),
+        }
     }
 }
 
@@ -191,6 +194,7 @@ pub enum Decorations {
 ///
 /// Newtype to avoid passing values incorrectly.
 #[derive(Deserialize, Serialize, Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[serde(default)]
 pub struct Dimensions {
     /// Window width in character columns.
     pub columns: usize,
@@ -208,7 +212,10 @@ pub struct Class {
 
 impl Class {
     pub fn new(general: impl ToString, instance: impl ToString) -> Self {
-        Self { general: general.to_string(), instance: instance.to_string() }
+        Self {
+            general: general.to_string(),
+            instance: instance.to_string(),
+        }
     }
 }
 
@@ -235,7 +242,10 @@ impl<'de> Deserialize<'de> for Class {
             where
                 E: de::Error,
             {
-                Ok(Self::Value { instance: value.into(), ..Self::Value::default() })
+                Ok(Self::Value {
+                    instance: value.into(),
+                    ..Self::Value::default()
+                })
             }
 
             fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
@@ -253,7 +263,7 @@ impl<'de> Deserialize<'de> for Class {
                                     target: LOG_TARGET_CONFIG,
                                     "Config error: class.instance: {err}"
                                 );
-                            },
+                            }
                         },
                         "general" => match String::deserialize(value) {
                             Ok(general) => class.general = general,
@@ -262,7 +272,7 @@ impl<'de> Deserialize<'de> for Class {
                                     target: LOG_TARGET_CONFIG,
                                     "Config error: class.instance: {err}"
                                 );
-                            },
+                            }
                         },
                         key => warn!(target: LOG_TARGET_CONFIG, "Unrecognized class field: {key}"),
                     }

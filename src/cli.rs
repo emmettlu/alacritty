@@ -337,12 +337,7 @@ impl ParsedOptions {
         let mut i = 0;
         while i < self.config_options.len() {
             let (_, parsed) = &self.config_options[i];
-            match config.replace(parsed.clone()) {
-                Err(_) => {
-                    // Skip broken options
-                }
-                Ok(_) => {}
-            }
+            config.replace(parsed.clone()).unwrap();
             i += 1;
         }
         Rc::new(config)
@@ -375,6 +370,8 @@ impl DerefMut for ParsedOptions {
 }
 
 /// IPC configuration struct.
+
+#[cfg(unix)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpcConfig {
     /// Window ID to apply config to.
@@ -386,6 +383,7 @@ pub struct IpcConfig {
 }
 
 /// Socket reply types.
+#[cfg(unix)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SocketReply {
     /// Config response.

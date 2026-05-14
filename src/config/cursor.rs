@@ -15,6 +15,7 @@ const MIN_BLINK_INTERVAL: u64 = 10;
 const MIN_BLINK_CYCLES_BEFORE_PAUSE: u64 = 1;
 
 #[derive(Deserialize, Serialize, Copy, Clone, Debug, PartialEq)]
+#[serde(default)]
 pub struct Cursor {
     pub style: ConfigCursorStyle,
     pub vi_mode_style: Option<ConfigCursorStyle>,

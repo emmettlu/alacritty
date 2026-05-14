@@ -6,6 +6,7 @@ use crate::config::bindings::{self, MouseBinding};
 use crate::config::ui_config;
 
 #[derive(Deserialize, Serialize, Default, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct Mouse {
     pub hide_when_typing: bool,
     #[serde(skip_serializing)]

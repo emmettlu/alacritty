@@ -2,11 +2,8 @@
 name = "alacritty"
 version = "0.18.0"
 edition = "2024"
-description = "A fast, cross-platform, GPU terminal emulator"
 readme = "README.md"
-homepage = "https://alacritty.org"
 repository = "https://github.com/alacritty/alacritty"
-license = "Apache-2.0"
 
 [dependencies]
 base64 = "0"

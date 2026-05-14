@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 /// This section is for fields which can not be easily categorized,
 /// to avoid common TOML issues with root-level fields.
 #[derive(Deserialize, Serialize, Clone, PartialEq, Debug)]
+#[serde(default)]
 pub struct General {
     /// Configuration file imports.
     ///

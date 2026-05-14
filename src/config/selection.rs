@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::terminal::term::SEMANTIC_ESCAPE_CHARS;
 
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct Selection {
     pub semantic_escape_chars: String,
     pub save_to_clipboard: bool,

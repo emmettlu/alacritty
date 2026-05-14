@@ -6,6 +6,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use crate::display::color::{CellRgb, Rgb};
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(default)]
 pub struct Colors {
     pub primary: PrimaryColors,
     pub cursor: InvertedCellColors,
@@ -34,18 +35,21 @@ impl Colors {
 }
 
 #[derive(Deserialize, Serialize, Copy, Clone, Default, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct LineIndicatorColors {
     pub foreground: Option<Rgb>,
     pub background: Option<Rgb>,
 }
 
 #[derive(Deserialize, Serialize, Default, Copy, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct HintColors {
     pub start: HintStartColors,
     pub end: HintEndColors,
 }
 
 #[derive(Deserialize, Serialize, Copy, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct HintStartColors {
     pub foreground: CellRgb,
     pub background: CellRgb,
@@ -61,6 +65,7 @@ impl Default for HintStartColors {
 }
 
 #[derive(Deserialize, Serialize, Copy, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct HintEndColors {
     pub foreground: CellRgb,
     pub background: CellRgb,
@@ -112,6 +117,7 @@ impl<'de> Deserialize<'de> for ColorIndex {
 }
 
 #[derive(Deserialize, Serialize, Debug, Copy, Clone, PartialEq, Eq)]
+#[serde(default)]
 pub struct InvertedCellColors {
     #[serde(alias = "text")]
     pub foreground: CellRgb,
@@ -126,12 +132,14 @@ impl Default for InvertedCellColors {
 }
 
 #[derive(Deserialize, Serialize, Debug, Copy, Clone, Default, PartialEq, Eq)]
+#[serde(default)]
 pub struct SearchColors {
     pub focused_match: FocusedMatchColors,
     pub matches: MatchColors,
 }
 
 #[derive(Deserialize, Serialize, Debug, Copy, Clone, PartialEq, Eq)]
+#[serde(default)]
 pub struct FocusedMatchColors {
     pub foreground: CellRgb,
     pub background: CellRgb,
@@ -147,6 +155,7 @@ impl Default for FocusedMatchColors {
 }
 
 #[derive(Deserialize, Serialize, Debug, Copy, Clone, PartialEq, Eq)]
+#[serde(default)]
 pub struct MatchColors {
     pub foreground: CellRgb,
     pub background: CellRgb,
@@ -162,12 +171,14 @@ impl Default for MatchColors {
 }
 
 #[derive(Deserialize, Serialize, Debug, Copy, Clone, Default, PartialEq, Eq)]
+#[serde(default)]
 pub struct BarColors {
     foreground: Option<Rgb>,
     background: Option<Rgb>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct PrimaryColors {
     pub foreground: Rgb,
     pub background: Rgb,
@@ -187,6 +198,7 @@ impl Default for PrimaryColors {
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct NormalColors {
     pub black: Rgb,
     pub red: Rgb,
@@ -214,6 +226,7 @@ impl Default for NormalColors {
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct BrightColors {
     pub black: Rgb,
     pub red: Rgb,
@@ -244,6 +257,7 @@ impl Default for BrightColors {
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct DimColors {
     pub black: Rgb,
     pub red: Rgb,

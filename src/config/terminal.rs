@@ -7,6 +7,7 @@ use crate::terminal::term::Osc52;
 use crate::config::ui_config::{Program, StringVisitor};
 
 #[derive(Deserialize, Serialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
 pub struct Terminal {
     /// OSC52 support mode.
     pub osc52: SerdeOsc52,

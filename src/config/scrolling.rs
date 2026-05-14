@@ -8,6 +8,7 @@ pub const MAX_SCROLLBACK_LINES: u32 = 100_000;
 
 /// Struct for scrolling related settings.
 #[derive(Deserialize, Serialize, Copy, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct Scrolling {
     pub multiplier: u8,
 
