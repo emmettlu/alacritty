@@ -1,8 +1,3 @@
-//! Alacritty - The GPU Enhanced Terminal.
-
-#![warn(rust_2018_idioms, future_incompatible)]
-#![warn(clippy::all, clippy::if_not_else, clippy::enum_glob_use)]
-
 pub mod event;
 pub mod event_loop;
 pub mod grid;

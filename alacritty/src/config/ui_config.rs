@@ -138,6 +138,10 @@ impl UiConfig {
             env: HashMap::new(),
             #[cfg(target_os = "windows")]
             escape_args: false,
+            #[cfg(target_os = "linux")]
+            escape_args: false,
+            #[cfg(target_os = "macos")]
+            escape_args: false,
         }
     }
 

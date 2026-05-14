@@ -16,8 +16,11 @@ use winit::window::WindowId;
 
 use alacritty_terminal::thread;
 
-use crate::cli::{Options, SocketMessage};
+use crate::cli::Options;
 use crate::event::{Event, EventType};
+
+// Re-export IPC types
+pub use crate::cli::{IpcConfig, SocketMessage, SocketReply};
 
 /// Environment variable name for the IPC socket path.
 const ALACRITTY_SOCKET_ENV: &str = "ALACRITTY_SOCKET";
@@ -156,12 +159,15 @@ fn send_reply_fallible(stream: &mut UnixStream, message: SocketReply) -> IoResul
 /// Directory for the IPC socket file.
 #[cfg(not(target_os = "macos"))]
 fn socket_dir() -> PathBuf {
-    xdg::BaseDirectories::with_prefix("alacritty")
-        .get_runtime_directory()
-        .map(ToOwned::to_owned)
-        .ok()
-        .and_then(|path| fs::create_dir_all(&path).map(|_| path).ok())
-        .unwrap_or_else(env::temp_dir)
+    // Try to use XDG_RUNTIME_DIR first, then fall back to temp dir
+    if let Ok(runtime_dir) = env::var("XDG_RUNTIME_DIR") {
+        let path = PathBuf::from(runtime_dir).join("alacritty");
+        let _ = fs::create_dir_all(&path);
+        return path;
+    }
+
+    // Fall back to temp directory
+    env::temp_dir().join("alacritty")
 }
 
 /// Directory for the IPC socket file.
@@ -235,10 +241,4 @@ fn socket_prefix() -> String {
 #[cfg(target_os = "macos")]
 fn socket_prefix() -> String {
     String::from("Alacritty")
-}
-
-/// IPC socket replies.
-#[derive(Serialize, Deserialize, Debug)]
-pub enum SocketReply {
-    GetConfig(String),
 }

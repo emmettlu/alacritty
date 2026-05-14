@@ -1,15 +1,19 @@
 use std::fmt::{self, Display, Formatter};
 
 use bitflags::bitflags;
+#[cfg(windows)]
 use windows_sys::Win32::Foundation::HWND;
+#[cfg(windows)]
 use windows_sys::Win32::Graphics::Dwm::{
     DWM_BB_BLURREGION, DWM_BB_ENABLE, DWM_BLURBEHIND, DwmEnableBlurBehindWindow,
 };
+#[cfg(windows)]
 use windows_sys::Win32::Graphics::Gdi::{CreateRectRgn, DeleteObject};
 
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event_loop::ActiveEventLoop;
 use winit::monitor::MonitorHandle;
+#[cfg(windows)]
 use winit::platform::windows::{IconExtWindows, WindowAttributesExtWindows};
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
@@ -26,6 +30,7 @@ use crate::config::window::{Decorations, Identity, WindowConfig};
 use crate::display::SizeInfo;
 
 /// This should match the definition of IDI_ICON from `alacritty.rc`.
+#[cfg(windows)]
 const IDI_ICON: u16 = 0x101;
 
 /// Window errors.
@@ -120,9 +125,16 @@ impl Window {
             .with_title(&identity.title)
             .with_theme(config.window.theme())
             .with_visible(false)
-            .with_transparent(true)
-            .with_no_redirection_bitmap(config.window.opacity.as_f32() < 1.0)
-            .with_blur(config.window.blur)
+            .with_transparent(true);
+
+        #[cfg(windows)]
+        {
+            window_attributes = window_attributes
+                .with_no_redirection_bitmap(config.window.opacity.as_f32() < 1.0)
+                .with_blur(config.window.blur);
+        }
+
+        window_attributes = window_attributes
             .with_maximized(config.window.maximized())
             .with_fullscreen(config.window.fullscreen())
             .with_window_level(config.window.level.into());
@@ -221,6 +233,7 @@ impl Window {
         self.mouse_visible
     }
 
+    #[cfg(windows)]
     pub fn get_platform_window(_: &Identity, window_config: &WindowConfig) -> WindowAttributes {
         let icon = winit::window::Icon::from_resource(IDI_ICON, None);
 
@@ -258,6 +271,12 @@ impl Window {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    pub fn get_platform_window(_: &Identity, window_config: &WindowConfig) -> WindowAttributes {
+        WinitWindow::default_attributes()
+            .with_decorations(window_config.decorations != Decorations::None)
+    }
+
     pub fn set_urgent(&self, is_urgent: bool) {
         let attention = if is_urgent { Some(UserAttentionType::Critical) } else { None };
 
@@ -276,9 +295,11 @@ impl Window {
     pub fn set_transparent(&self, transparent: bool) {
         self.window.set_transparent(transparent);
 
+        #[cfg(windows)]
         self.set_blur_behind(transparent);
     }
 
+    #[cfg(windows)]
     fn set_blur_behind(&self, transparent: bool) {
         let hwnd = match self.window.window_handle().unwrap().as_raw() {
             RawWindowHandle::Win32(handle) => handle.hwnd.get() as HWND,
@@ -296,6 +317,11 @@ impl Window {
             DwmEnableBlurBehindWindow(hwnd, &blur_behind);
             DeleteObject(region);
         }
+    }
+
+    #[cfg(unix)]
+    fn set_blur_behind(&self, _transparent: bool) {
+        // Linux/macOS don't have the same blur behind feature
     }
 
     pub fn set_blur(&self, blur: bool) {

@@ -7,9 +7,9 @@ use std::path::PathBuf;
 use std::{env, fs};
 
 use log::info;
-#[cfg(not(debug_assertions))]
-use windows_sys::Win32::System::Console::FreeConsole;
+#[cfg(windows)]
 use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+
 use winit::event_loop::EventLoop;
 
 use alacritty_terminal::tty;
@@ -21,6 +21,10 @@ mod daemon;
 mod display;
 mod event;
 mod input;
+
+#[cfg(unix)]
+mod ipc;
+
 mod logging;
 mod message_bar;
 mod migrate;
@@ -41,6 +45,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // When linked with the windows subsystem windows won't automatically attach
     // to the console of the parent process, so we do it explicitly. This fails
     // silently if the parent has no console.
+    #[cfg(windows)]
     unsafe {
         AttachConsole(ATTACH_PARENT_PROCESS);
     }
@@ -69,7 +74,11 @@ impl Drop for TemporaryFiles {
         if let Some(log_file) = &self.log_file
             && fs::remove_file(log_file).is_ok()
         {
-            let _ = writeln!(io::stdout(), "Deleted log file at \"{}\"", log_file.display());
+            let _ = writeln!(
+                io::stdout(),
+                "Deleted log file at \"{}\"",
+                log_file.display()
+            );
         }
     }
 }
@@ -107,7 +116,9 @@ fn alacritty(mut options: Options) -> Result<(), Box<dyn Error>> {
 
     // Setup automatic RAII cleanup for our files.
     let log_cleanup = log_file.filter(|_| !config.debug.persistent_logging);
-    let _files = TemporaryFiles { log_file: log_cleanup };
+    let _files = TemporaryFiles {
+        log_file: log_cleanup,
+    };
 
     // Event processor.
     let mut processor = Processor::new(config, options, &window_event_loop);
@@ -118,13 +129,6 @@ fn alacritty(mut options: Options) -> Result<(), Box<dyn Error>> {
     // Terminate the config monitor.
     if let Some(config_monitor) = processor.config_monitor.take() {
         config_monitor.shutdown();
-    }
-
-    // Without explicitly detaching the console cmd won't redraw its prompt.
-    // Keep it attached in debug builds so returned errors are visible in `cargo run`.
-    #[cfg(not(debug_assertions))]
-    unsafe {
-        FreeConsole();
     }
 
     info!("Goodbye");

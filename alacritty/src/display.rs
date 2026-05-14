@@ -397,10 +397,17 @@ impl Display {
 
         // 创建 wgpu instance / adapter / device / queue / surface.
         let mut instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
-        instance_descriptor.backends = wgpu::Backends::DX12;
-        if config.window_opacity() < 1.0 {
-            instance_descriptor.backend_options.dx12.presentation_system =
-                wgpu::Dx12SwapchainKind::DxgiFromVisual;
+        #[cfg(windows)]
+        {
+            instance_descriptor.backends = wgpu::Backends::DX12;
+            if config.window_opacity() < 1.0 {
+                instance_descriptor.backend_options.dx12.presentation_system =
+                    wgpu::Dx12SwapchainKind::DxgiFromVisual;
+            }
+        }
+        #[cfg(unix)]
+        {
+            instance_descriptor.backends = wgpu::Backends::VULKAN;
         }
         let instance = wgpu::Instance::new(instance_descriptor);
 

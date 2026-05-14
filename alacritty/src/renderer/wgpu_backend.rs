@@ -25,8 +25,8 @@ pub use glyph_cache::{Glyph, GlyphCache, LoadGlyph};
 use atlas::{ATLAS_SIZE, Atlas};
 
 // 着色器源码
-const TEXT_SHADER: &str = include_str!("../../../res/wgpu/text.wgsl");
-const RECT_SHADER: &str = include_str!("../../../res/wgpu/rect.wgsl");
+const TEXT_SHADER: &str = include_str!("../../res/wgpu/text.wgsl");
+const RECT_SHADER: &str = include_str!("../../res/wgpu/rect.wgsl");
 
 /// 文本实例数据, 与 WGSL 中的 VertexInput 对应.
 #[repr(C)]

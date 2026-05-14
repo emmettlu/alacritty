@@ -106,7 +106,7 @@ impl Processor {
         // Disable all device events, since we don't care about them.
         event_loop.listen_device_events(DeviceEvents::Never);
 
-        let clipboard = Clipboard::new();
+        let clipboard = Clipboard::new(event_loop);
 
         // Create a config monitor.
         //
@@ -274,8 +274,13 @@ impl ApplicationHandler<Event> for Processor {
             // Process IPC config update.
             #[cfg(unix)]
             (EventType::IpcConfig(ipc_config), window_id) => {
-                // Try and parse options as toml.
-                let mut options = ParsedOptions::from_options(&ipc_config.options);
+                // Parse options from the IPC config string.
+                let options_list = if ipc_config.options.is_empty() {
+                    vec![]
+                } else {
+                    vec![ipc_config.options.clone()]
+                };
+                let mut options = ParsedOptions::from_options(&options_list);
 
                 // Override IPC config for each window with matching ID.
                 for (_, window_context) in self
@@ -305,7 +310,7 @@ impl ApplicationHandler<Event> for Processor {
                 // Get the config for the requested window ID.
                 let config = match self.windows.iter().find(|(id, _)| window_id == Some(*id)) {
                     Some((_, window_context)) => window_context.config(),
-                    None => &self
+                    None => self
                         .global_ipc_options
                         .override_config_rc(self.config.clone()),
                 };
@@ -477,7 +482,8 @@ impl ApplicationHandler<Event> for Processor {
             info!("Exiting the event loop");
         }
 
-        self.clipboard = Clipboard::default();
+        // Reset clipboard to nop to avoid X11 reconnection on exit.
+        self.clipboard = Clipboard::new_nop();
     }
 }
 

@@ -2,11 +2,9 @@
 name = "alacritty_terminal"
 version = "0.3.0"
 edition.workspace = true
-description = "Library for writing terminal emulators"
 readme = "../README.md"
 homepage = "https://alacritty.org"
 repository = "https://github.com/alacritty/alacritty"
-license = "Apache-2.0"
 
 [dependencies]
 base64 = "0"
@@ -22,6 +20,18 @@ vte = { version = "0", default-features = false, features = ["ansi", "std"] }
 
 [dev-dependencies]
 serde_json = "1"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", default-features = false, features = [
+  "event",
+  "fs",
+  "io_uring",
+  "process",
+  "pty",
+  "stdio",
+  "termios",
+] }
+signal-hook = "0"
 
 [target.'cfg(windows)'.dependencies]
 miow = "0"

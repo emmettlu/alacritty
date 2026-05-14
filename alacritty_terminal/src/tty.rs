@@ -1,4 +1,4 @@
-//! TTY related functionality (Windows-only).
+//! TTY related functionality.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -8,7 +8,14 @@ use std::{env, io};
 
 use polling::{Event, PollMode, Poller};
 
+#[cfg(unix)]
+pub mod unix;
+#[cfg(windows)]
 pub mod windows;
+
+#[cfg(unix)]
+pub use self::unix::*;
+#[cfg(windows)]
 pub use self::windows::*;
 
 /// Configuration for the `Pty` interface.

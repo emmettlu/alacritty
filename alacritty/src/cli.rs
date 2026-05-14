@@ -49,6 +49,11 @@ pub struct Options {
     #[clap(long)]
     pub daemon: bool,
 
+    /// IPC socket path.
+    #[cfg(unix)]
+    #[clap(long)]
+    pub socket: Option<PathBuf>,
+
     /// CLI options for config overrides.
     #[clap(skip)]
     pub config_options: ParsedOptions,
@@ -180,6 +185,10 @@ impl From<TerminalOptions> for PtyOptions {
             drain_on_exit: options.hold,
             env: HashMap::new(),
             #[cfg(target_os = "windows")]
+            escape_args: false,
+            #[cfg(target_os = "linux")]
+            escape_args: false,
+            #[cfg(target_os = "macos")]
             escape_args: false,
         }
     }
@@ -317,6 +326,37 @@ impl ParsedOptions {
         self.override_config(&mut config);
         Rc::new(config)
     }
+
+    /// Apply CLI config overrides to a CoW config (immutable version).
+    pub fn override_config_rc_immutable(&self, config: Rc<UiConfig>) -> Rc<UiConfig> {
+        if self.config_options.is_empty() {
+            return config;
+        }
+
+        let mut config = (*config).clone();
+        let mut i = 0;
+        while i < self.config_options.len() {
+            let (_, parsed) = &self.config_options[i];
+            match config.replace(parsed.clone()) {
+                Err(_) => {
+                    // Skip broken options
+                }
+                Ok(_) => {}
+            }
+            i += 1;
+        }
+        Rc::new(config)
+    }
+
+    /// Append another ParsedOptions.
+    pub fn append(&mut self, other: &ParsedOptions) {
+        self.config_options.extend(other.config_options.iter().cloned());
+    }
+
+    /// Merge another ParsedOptions (same as append).
+    pub fn merge(&mut self, other: &ParsedOptions) {
+        self.append(other);
+    }
 }
 
 impl Deref for ParsedOptions {
@@ -331,6 +371,42 @@ impl DerefMut for ParsedOptions {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.config_options
     }
+}
+
+/// IPC configuration struct.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IpcConfig {
+    /// Window ID to apply config to.
+    pub window_id: Option<usize>,
+    /// Reset config flag.
+    pub reset: bool,
+    /// Configuration options.
+    pub options: String,
+}
+
+/// Socket message types.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SocketMessage {
+    /// Create a new window.
+    CreateWindow(WindowOptions),
+    /// Apply configuration.
+    Config(IpcConfig),
+    /// Get configuration.
+    GetConfig(GetConfigRequest),
+}
+
+/// Get config request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetConfigRequest {
+    /// Window ID to get config for.
+    pub window_id: Option<usize>,
+}
+
+/// Socket reply types.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SocketReply {
+    /// Config response.
+    GetConfig(String),
 }
 
 #[cfg(test)]

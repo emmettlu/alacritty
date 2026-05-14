@@ -387,6 +387,26 @@ impl WindowContext {
         self.display.window.id()
     }
 
+    /// Get the config for this window context.
+    #[cfg(unix)]
+    pub fn config(&self) -> Rc<UiConfig> {
+        self.window_config.override_config_rc_immutable(self.config.clone())
+    }
+
+    /// Reset window config to default.
+    #[cfg(unix)]
+    pub fn reset_window_config(&mut self, config: Rc<UiConfig>) {
+        self.window_config = ParsedOptions::default();
+        self.update_config(config);
+    }
+
+    /// Add window-specific configuration.
+    #[cfg(unix)]
+    pub fn add_window_config(&mut self, config: Rc<UiConfig>, options: &ParsedOptions) {
+        self.window_config.merge(options);
+        self.update_config(config);
+    }
+
     /// Write the ref test results to the disk.
     pub fn write_ref_test_results(&self) {
         // Dump grid state.
