@@ -1,0 +1,40 @@
+[package]
+name = "alacritty_terminal"
+version = "0.3.0"
+edition.workspace = true
+description = "Library for writing terminal emulators"
+readme = "../README.md"
+homepage = "https://alacritty.org"
+repository = "https://github.com/alacritty/alacritty"
+license = "Apache-2.0"
+
+[dependencies]
+base64 = "0"
+bitflags = "2"
+home = "0"
+log = "0"
+parking_lot = "0"
+polling = "3"
+regex-automata = "0"
+serde = { version = "1", features = ["derive", "rc"], optional = true }
+unicode-width = "0"
+vte = { version = "0", default-features = false, features = ["ansi", "std"] }
+
+[dev-dependencies]
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+miow = "0"
+piper = "0"
+windows-sys = { version = "0", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_Console",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Threading",
+  "Win32_System_WindowsProgramming",
+] }
+
+[features]
+default = ["serde"]
+serde = ["bitflags/serde", "dep:serde", "vte/serde"]

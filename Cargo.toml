@@ -1,0 +1,15 @@
+[workspace]
+resolver = "3"
+members = [
+  "alacritty",
+  "alacritty_config",
+  "alacritty_config_derive",
+  "alacritty_terminal",
+]
+
+[workspace.package]
+edition = "2024"
+
+[workspace.dependencies]
+toml = "0"
+toml_edit = "0"

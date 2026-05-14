@@ -1,0 +1,78 @@
+name: Build
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    env:
+      PROJECT_REPOSITORY: ""
+      PROJECT_VERSION: ""
+      PROJECT_PATH: ""
+      PROJECT_BIN: alacritty
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Windows Config
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          git config --system core.longpaths true
+          echo "Enabled long paths in git"
+
+          New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+          echo "Enabled long paths in registry"
+
+          $git_link = "C:\Program Files\Git\usr\bin\link.exe"
+          if (Test-Path $git_link) {
+              Rename-Item $git_link "_link.exe"
+          }
+          echo "Removed link.exe in git"
+
+      - name: Setup MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          toolset: 14.29
+          arch: x64
+          sdk: 10.0.19041.0
+
+      # - name: Checkout self
+      #   uses: actions/checkout@v6
+
+      # - name: Checkout ${{ env.PROJECT_PATH }}
+      #   uses: actions/checkout@v6
+      #   with:
+      #     repository: ${{ env.PROJECT_REPOSITORY }}
+      #     ref: refs/tags/${{ env.PROJECT_VERSION }}
+      #     path: ${{ env.PROJECT_PATH }}
+
+      - name: Copy config file
+        shell: bash
+        # working-directory: ${{ env.PROJECT_PATH }}
+        run: |
+          mkdir -p .cargo
+          cp -f ../.cargo/config.toml .cargo
+
+      - name: Build
+        shell: bash
+        # working-directory: ${{ env.PROJECT_PATH }}
+        run: |
+          cargo update
+          cargo b -r
+
+      - name: Archive
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ env.PROJECT_BIN }}_${{ runner.os }}
+          path: |
+            ${{ env.PROJECT_PATH }}/target/release/*.so
+            ${{ env.PROJECT_PATH }}/target/release/*.dll
+
+            ${{ env.PROJECT_PATH }}/target/release/${{ env.PROJECT_BIN }}
+            ${{ env.PROJECT_PATH }}/target/release/${{ env.PROJECT_BIN }}.exe

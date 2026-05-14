@@ -1,0 +1,17 @@
+[package]
+name = "alacritty_config"
+version = "0.3.0"
+edition.workspace = true
+description = "Alacritty configuration abstractions"
+homepage = "https://alacritty.org"
+repository = "https://github.com/alacritty/alacritty"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+log = { version = "0", features = ["serde"] }
+serde = "1"
+toml.workspace = true
+
+[dev-dependencies]
+alacritty_config_derive = { path = "../alacritty_config_derive" }
+serde = { version = "1", features = ["derive"] }
