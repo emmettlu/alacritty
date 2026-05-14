@@ -106,7 +106,10 @@ impl Processor {
         // Disable all device events, since we don't care about them.
         event_loop.listen_device_events(DeviceEvents::Never);
 
+        #[cfg(unix)]
         let clipboard = Clipboard::new(event_loop);
+        #[cfg(windows)]
+        let clipboard = Clipboard::new();
 
         // Create a config monitor.
         //
