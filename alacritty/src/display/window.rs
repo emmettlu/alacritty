@@ -154,7 +154,10 @@ impl Window {
 
         let scale_factor = window.scale_factor();
         log::info!("Window scale factor: {scale_factor}");
-        let is_x11 = matches!(window.window_handle().unwrap().as_raw(), RawWindowHandle::Xlib(_));
+        let is_x11 = matches!(
+            window.window_handle().unwrap().as_raw(),
+            RawWindowHandle::Xlib(_)
+        );
 
         Ok(Self {
             hold: options.terminal_options.hold,
@@ -278,7 +281,11 @@ impl Window {
     }
 
     pub fn set_urgent(&self, is_urgent: bool) {
-        let attention = if is_urgent { Some(UserAttentionType::Critical) } else { None };
+        let attention = if is_urgent {
+            Some(UserAttentionType::Critical)
+        } else {
+            None
+        };
 
         self.window.request_user_attention(attention);
     }
@@ -317,11 +324,6 @@ impl Window {
             DwmEnableBlurBehindWindow(hwnd, &blur_behind);
             DeleteObject(region);
         }
-    }
-
-    #[cfg(unix)]
-    fn set_blur_behind(&self, _transparent: bool) {
-        // Linux/macOS don't have the same blur behind feature
     }
 
     pub fn set_blur(&self, blur: bool) {
@@ -363,7 +365,8 @@ impl Window {
 
     pub fn set_fullscreen(&self, fullscreen: bool) {
         if fullscreen {
-            self.window.set_fullscreen(Some(Fullscreen::Borderless(None)));
+            self.window
+                .set_fullscreen(Some(Fullscreen::Borderless(None)));
         } else {
             self.window.set_fullscreen(None);
         }

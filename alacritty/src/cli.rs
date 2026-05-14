@@ -350,7 +350,8 @@ impl ParsedOptions {
 
     /// Append another ParsedOptions.
     pub fn append(&mut self, other: &ParsedOptions) {
-        self.config_options.extend(other.config_options.iter().cloned());
+        self.config_options
+            .extend(other.config_options.iter().cloned());
     }
 
     /// Merge another ParsedOptions (same as append).
@@ -382,24 +383,6 @@ pub struct IpcConfig {
     pub reset: bool,
     /// Configuration options.
     pub options: String,
-}
-
-/// Socket message types.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum SocketMessage {
-    /// Create a new window.
-    CreateWindow(WindowOptions),
-    /// Apply configuration.
-    Config(IpcConfig),
-    /// Get configuration.
-    GetConfig(GetConfigRequest),
-}
-
-/// Get config request.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GetConfigRequest {
-    /// Window ID to get config for.
-    pub window_id: Option<usize>,
 }
 
 /// Socket reply types.
