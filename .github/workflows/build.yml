@@ -53,7 +53,7 @@ jobs:
       #     path: ${{ env.PROJECT_PATH }}
 
       - name: Linux install deps
-        if: runner.os = 'Linux'
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           sudo apt install libwayland-dev
@@ -61,9 +61,7 @@ jobs:
 
       - name: Build
         shell: bash
-        # working-directory: ${{ env.PROJECT_PATH }}
         run: |
-          cargo update
           cargo b -r
 
       - name: Archive
