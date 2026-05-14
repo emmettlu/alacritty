@@ -1,24 +1,22 @@
 # Alacritty (wgpu restructure)
 
-This repository is a restructured version of Alacritty with a wgpu based renderer. It keeps the terminal core and configuration crates while moving GPU rendering to wgpu and WGSL shaders.
+This repository is a restructured version of Alacritty with a wgpu based renderer. It is organized as a single binary crate, with terminal core and configuration code inlined under `src/`.
 
 ## Highlights
-- wgpu renderer with WGSL shaders in `alacritty/res/wgpu`
+- wgpu renderer with WGSL shaders in `res/wgpu`
 - Platform integration through `winit`
-- Terminal core split into dedicated crates
+- Single binary crate layout
 
 ## Repository layout
-- `alacritty/`: application crate and entry point in `alacritty/src/main.rs`
-- `alacritty_terminal/`: terminal core
-- `alacritty_config/`: configuration types and parsing
-- `alacritty_config_derive/`: derive macros for config
+- `src/`: application, terminal core, and configuration code
+- `res/`: renderer resources and shaders
+- `windows/`: Windows resource files
 - `scripts/`: helper scripts
 
 ## Build
 From the repository root:
 
 ```
-cd alacritty
 cargo build
 ```
 
@@ -26,7 +24,6 @@ cargo build
 From the repository root:
 
 ```
-cd alacritty
 cargo run
 ```
 

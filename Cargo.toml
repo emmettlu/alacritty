@@ -1,15 +1,102 @@
-[workspace]
-resolver = "3"
-members = [
-  "alacritty",
-  "alacritty_config",
-  "alacritty_config_derive",
-  "alacritty_terminal",
-]
-
-[workspace.package]
+[package]
+name = "alacritty"
+version = "0.18.0"
 edition = "2024"
+description = "A fast, cross-platform, GPU terminal emulator"
+readme = "README.md"
+homepage = "https://alacritty.org"
+repository = "https://github.com/alacritty/alacritty"
+license = "Apache-2.0"
 
-[workspace.dependencies]
+[dependencies]
+base64 = "0"
+bitflags = { version = "2", features = ["serde"] }
+bytemuck = { version = "1", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
+copypasta = { version = "0", default-features = false, features = [
+  "wayland",
+  "x11"
+] }
+crossfont = "0"
+dirs = "6"
+home = "0"
+log = { version = "0.4", features = ["serde", "std"] }
+notify = "8"
+parking_lot = "0"
+polling = "3"
+pollster = "0"
+regex-automata = "0"
+rustc-hash = "2"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+serde_yaml = "0"
+tempfile = "3"
 toml = "1"
 toml_edit = "0"
+unicode-width = "0"
+vte = { version = "0", default-features = false, features = [
+  "ansi",
+  "serde",
+  "std"
+] }
+
+[dev-dependencies]
+clap_complete = "4"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", default-features = false, features = [
+  "event",
+  "fs",
+  "io_uring",
+  "process",
+  "pty",
+  "stdio",
+  "termios",
+] }
+signal-hook = "0"
+wgpu = { version = "29", default-features = false, features = [
+  "parking_lot",
+  "std",
+  "vulkan",
+  "wgsl",
+] }
+winit = { version = "0", default-features = false, features = [
+  "rwh_06",
+  "serde",
+  "wayland",
+  "x11",
+] }
+
+[target.'cfg(windows)'.dependencies]
+miow = "0"
+piper = "0"
+wgpu = { version = "29", default-features = false, features = [
+  "dx12",
+  "parking_lot",
+  "std",
+  "wgsl",
+] }
+windows-sys = { version = "0", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_Security",
+  "Win32_System_Console",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Threading",
+  "Win32_System_WindowsProgramming",
+  "Win32_UI_WindowsAndMessaging",
+] }
+winit = { version = "0", default-features = false, features = [
+  "rwh_06",
+  "serde"
+] }
+
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3"
+
+[features]
+default = []
+nightly = []
+wayland = []
+x11 = []
