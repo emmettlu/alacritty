@@ -1,7 +1,6 @@
 use serde::{Deserialize, Deserializer, Serialize, de};
 use toml::Value;
 
-
 use crate::terminal::term::Osc52;
 
 use crate::config::ui_config::{Program, StringVisitor};
@@ -24,6 +23,8 @@ impl<'de> Deserialize<'de> for SerdeOsc52 {
         D: Deserializer<'de>,
     {
         let value = deserializer.deserialize_str(StringVisitor)?;
-        Osc52::deserialize(Value::String(value)).map(SerdeOsc52).map_err(de::Error::custom)
+        Osc52::deserialize(Value::String(value))
+            .map(SerdeOsc52)
+            .map_err(de::Error::custom)
     }
 }

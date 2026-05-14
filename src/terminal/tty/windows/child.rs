@@ -115,23 +115,6 @@ impl ChildExitWatcher {
     pub fn deregister(&self) {
         *self.interest.lock().unwrap() = None;
     }
-
-    /// Retrieve the process handle of the underlying child process.
-    ///
-    /// This function does **not** pass ownership of the raw handle to you,
-    /// and the handle is only guaranteed to be valid while the hosted application
-    /// has not yet been destroyed.
-    ///
-    /// If you terminate the process using this handle, the terminal will get a
-    /// timeout error, and the child watcher will emit an `Exited` event.
-    pub fn raw_handle(&self) -> HANDLE {
-        self.child_handle.load(Ordering::Relaxed) as HANDLE
-    }
-
-    /// Retrieve the Process ID associated to the underlying child process.
-    pub fn pid(&self) -> Option<NonZeroU32> {
-        self.pid
-    }
 }
 
 impl Drop for ChildExitWatcher {

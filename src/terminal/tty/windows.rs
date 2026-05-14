@@ -52,10 +52,6 @@ impl Pty {
             child_watcher,
         }
     }
-
-    pub fn child_watcher(&self) -> &ChildExitWatcher {
-        &self.child_watcher
-    }
 }
 
 fn with_key(mut event: Event, key: usize) -> Event {

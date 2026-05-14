@@ -19,7 +19,7 @@ use crate::terminal::event_loop::{EventLoop as PtyEventLoop, Msg, Notifier};
 use crate::terminal::grid::{Dimensions, Scroll};
 use crate::terminal::index::Direction;
 use crate::terminal::sync::FairMutex;
-use crate::terminal::term::test::TermSize;
+use crate::terminal::term::TermSize;
 use crate::terminal::term::{Term, TermMode};
 use crate::terminal::tty;
 
@@ -64,7 +64,9 @@ impl WindowContext {
         mut options: WindowOptions,
     ) -> Result<Self, Box<dyn Error>> {
         let mut identity = config.window.identity.clone();
-        options.window_identity.override_identity_config(&mut identity);
+        options
+            .window_identity
+            .override_identity_config(&mut identity);
 
         let window = Window::new(event_loop, &config, &identity, &mut options)?;
 
@@ -81,7 +83,9 @@ impl WindowContext {
         config_overrides: ParsedOptions,
     ) -> Result<Self, Box<dyn Error>> {
         let mut identity = config.window.identity.clone();
-        options.window_identity.override_identity_config(&mut identity);
+        options
+            .window_identity
+            .override_identity_config(&mut identity);
 
         let window = Window::new(event_loop, &config, &identity, &mut options)?;
 
@@ -105,7 +109,9 @@ impl WindowContext {
         proxy: EventLoopProxy<Event>,
     ) -> Result<Self, Box<dyn Error>> {
         let mut pty_config = config.pty_config();
-        options.terminal_options.override_pty_config(&mut pty_config);
+        options
+            .terminal_options
+            .override_pty_config(&mut pty_config);
 
         let preserve_title = options.window_identity.title.is_some();
 
@@ -122,7 +128,11 @@ impl WindowContext {
         // This object contains all of the state about what's being displayed. It's
         // wrapped in a clonable mutex since both the I/O loop and display need to
         // access it.
-        let terminal = Term::new(config.term_options(), &display.size_info, event_proxy.clone());
+        let terminal = Term::new(
+            config.term_options(),
+            &display.size_info,
+            event_proxy.clone(),
+        );
         let terminal = Arc::new(FairMutex::new(terminal));
 
         // Create the PTY.
@@ -130,7 +140,11 @@ impl WindowContext {
         // The PTY forks a process to run the shell on the slave side of the
         // pseudoterminal. A file descriptor for the master side is retained for
         // reading/writing to the shell.
-        let pty = tty::new(&pty_config, display.size_info.into(), display.window.id().into())?;
+        let pty = tty::new(
+            &pty_config,
+            display.size_info.into(),
+            display.window.id().into(),
+        )?;
 
         // Create the pseudoterminal I/O loop.
         //
@@ -229,7 +243,9 @@ impl WindowContext {
             && (!self.config.window.dynamic_title
                 || self.display.window.title() == old_config.window.identity.title)
         {
-            self.display.window.set_title(self.config.window.identity.title.clone());
+            self.display
+                .window
+                .set_title(self.config.window.identity.title.clone());
         }
 
         let opaque = self.config.window_opacity() >= 1.;
@@ -239,14 +255,18 @@ impl WindowContext {
         self.display.window.set_has_shadow(opaque);
 
         #[cfg(target_os = "macos")]
-        self.display.window.set_option_as_alt(self.config.window.option_as_alt());
+        self.display
+            .window
+            .set_option_as_alt(self.config.window.option_as_alt());
 
         // Change opacity and blur state.
         self.display.window.set_transparent(!opaque);
         self.display.window.set_blur(self.config.window.blur);
 
         // Update hint keys.
-        self.display.hint_state.update_alphabet(self.config.hints.alphabet());
+        self.display
+            .hint_state
+            .update_alphabet(self.config.hints.alphabet());
 
         // Update cursor blinking.
         let event = Event::new(TerminalEvent::CursorBlinkingChange.into(), None);
@@ -301,18 +321,21 @@ impl WindowContext {
     ) {
         match event {
             WinitEvent::AboutToWait
-            | WinitEvent::WindowEvent { event: WindowEvent::RedrawRequested, .. } => {
+            | WinitEvent::WindowEvent {
+                event: WindowEvent::RedrawRequested,
+                ..
+            } => {
                 // Skip further event handling with no staged updates.
                 if self.event_queue.is_empty() {
                     return;
                 }
 
                 // Continue to process all pending events.
-            },
+            }
             event => {
                 self.event_queue.push(event);
                 return;
-            },
+            }
         }
 
         let mut terminal = self.terminal.lock();
@@ -376,7 +399,13 @@ impl WindowContext {
         if self.dirty
             && self.display.window.has_frame
             && !self.occluded
-            && !matches!(event, WinitEvent::WindowEvent { event: WindowEvent::RedrawRequested, .. })
+            && !matches!(
+                event,
+                WinitEvent::WindowEvent {
+                    event: WindowEvent::RedrawRequested,
+                    ..
+                }
+            )
         {
             self.display.window.request_redraw();
         }
@@ -390,7 +419,8 @@ impl WindowContext {
     /// Get the config for this window context.
     #[cfg(unix)]
     pub fn config(&self) -> Rc<UiConfig> {
-        self.window_config.override_config_rc_immutable(self.config.clone())
+        self.window_config
+            .override_config_rc_immutable(self.config.clone())
     }
 
     /// Reset window config to default.
