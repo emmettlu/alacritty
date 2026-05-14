@@ -69,8 +69,8 @@ jobs:
         with:
           name: ${{ env.PROJECT_BIN }}_${{ runner.os }}
           path: |
-            ${{ env.PROJECT_PATH }}/target/release/*.so
-            ${{ env.PROJECT_PATH }}/target/release/*.dll
+            target/release/*.so
+            target/release/*.dll
 
-            ${{ env.PROJECT_PATH }}/target/release/${{ env.PROJECT_BIN }}
-            ${{ env.PROJECT_PATH }}/target/release/${{ env.PROJECT_BIN }}.exe
+            target/release/${{ env.PROJECT_BIN }}
+            target/release/${{ env.PROJECT_BIN }}.exe
