@@ -52,6 +52,13 @@ jobs:
       #     ref: refs/tags/${{ env.PROJECT_VERSION }}
       #     path: ${{ env.PROJECT_PATH }}
 
+      - name: Linux install deps
+        if: runner.os = 'Linux'
+        shell: bash
+        run: |
+          sudo apt install libwayland-dev
+
+
       - name: Build
         shell: bash
         # working-directory: ${{ env.PROJECT_PATH }}
