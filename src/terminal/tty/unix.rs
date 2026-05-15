@@ -91,16 +91,6 @@ pub struct Pty {
     sig_id: SigId,
 }
 
-impl Pty {
-    pub fn child(&self) -> &Child {
-        &self.child
-    }
-
-    pub fn file(&self) -> &File {
-        &self.file
-    }
-}
-
 /// User information that is required for a new shell session.
 struct ShellUser {
     user: String,
@@ -419,23 +409,6 @@ impl OnResize for Pty {
 
         if let Err(err) = tcsetwinsize(&self.file, win) {
             die!("tcsetwinsize failed: {err}");
-        }
-    }
-}
-
-/// Types that can produce a `Winsize`.
-pub trait ToWinsize {
-    /// Get a `Winsize`.
-    fn to_winsize(self) -> Winsize;
-}
-
-impl ToWinsize for WindowSize {
-    fn to_winsize(self) -> Winsize {
-        Winsize {
-            ws_row: self.num_lines,
-            ws_col: self.num_cols,
-            ws_xpixel: (self.num_cols as u32 * self.cell_width as u32) as u16,
-            ws_ypixel: (self.num_lines as u32 * self.cell_height as u32) as u16,
         }
     }
 }

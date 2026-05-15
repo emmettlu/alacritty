@@ -9,8 +9,3 @@ pub mod thread;
 pub mod tty;
 pub mod vi_mode;
 pub use vte;
-
-#[cfg(unix)]
-pub use grid::Grid;
-#[cfg(unix)]
-pub use term::Term;
