@@ -38,17 +38,15 @@ impl Clipboard {
 
                     unsafe {
                         let (primary, clipboard) =
-                            copypasta::wayland_clipboard::create_clipboards_from_external(
-                                display,
-                            );
+                            copypasta::wayland_clipboard::create_clipboards_from_external(display);
                         return Self {
                             clipboard: Box::new(clipboard),
                             selection: Some(Box::new(primary)),
                         };
                     }
                 }
-            },
-            Err(_) => {},
+            }
+            Err(_) => {}
         }
 
         // Fall back to X11.
@@ -66,11 +64,11 @@ impl Default for Clipboard {
                     return Self {
                         clipboard: Box::new(clipboard),
                         selection: None,
-                    }
-                },
+                    };
+                }
                 Err(err) => {
                     warn!("Failed to initialize X11 clipboard: {err}");
-                },
+                }
             }
         }
 
@@ -105,7 +103,7 @@ impl Clipboard {
             Err(err) => {
                 debug!("Unable to load text from clipboard: {err}");
                 String::new()
-            },
+            }
             Ok(text) => text,
         }
     }

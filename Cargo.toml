@@ -12,6 +12,7 @@ bytemuck = { version = "1", features = ["derive"] }
 clap = { version = "4", features = ["derive", "env"] }
 copypasta = { version = "0", default-features = false, features = [
   "wayland",
+  "wayland-dlopen",
   "x11"
 ] }
 crossfont = "0"
