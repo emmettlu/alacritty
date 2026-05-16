@@ -110,6 +110,22 @@ const BATCH_MAX: usize = 0x1_0000;
 const COLORED_FLAG: u32 = 1;
 const WIDE_CHAR_FLAG: u32 = 2;
 
+/// 将 sRGB 值转换为线性空间.
+/// sRGB 颜色在传递给 GPU 前需要进行此转换, 否则颜色会偏浅.
+#[inline]
+fn srgb_to_linear(srgb: u8) -> u8 {
+    let srgb = srgb as f32 / 255.0;
+    let linear = srgb.powf(2.2);
+    (linear * 255.0).round() as u8
+}
+
+/// f32 版本的 sRGB 到线性空间转换
+#[inline]
+fn srgb_to_linear_f32(srgb: u8) -> f32 {
+    let srgb = srgb as f32 / 255.0;
+    srgb.powf(2.2)
+}
+
 pub struct WgpuRenderer {
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
@@ -775,13 +791,15 @@ impl WgpuRenderer {
             uv_bot: glyph.uv_bot,
             uv_width: glyph.uv_width,
             uv_height: glyph.uv_height,
-            text_r: cell.fg.r as u32,
-            text_g: cell.fg.g as u32,
-            text_b: cell.fg.b as u32,
+            // 将 sRGB 颜色转换为线性空间
+            text_r: srgb_to_linear(cell.fg.r) as u32,
+            text_g: srgb_to_linear(cell.fg.g) as u32,
+            text_b: srgb_to_linear(cell.fg.b) as u32,
             cell_flags,
-            bg_r: cell.bg.r as u32,
-            bg_g: cell.bg.g as u32,
-            bg_b: cell.bg.b as u32,
+            // 将 sRGB 颜色转换为线性空间
+            bg_r: srgb_to_linear(cell.bg.r) as u32,
+            bg_g: srgb_to_linear(cell.bg.g) as u32,
+            bg_b: srgb_to_linear(cell.bg.b) as u32,
             bg_a: (cell.bg_alpha * 255.0) as u32,
         }
     }
@@ -853,9 +871,10 @@ impl WgpuRenderer {
         color: Rgb,
         alpha: f32,
     ) {
-        let r = (f32::from(color.r) / 255.0).min(1.0) * alpha;
-        let g = (f32::from(color.g) / 255.0).min(1.0) * alpha;
-        let b = (f32::from(color.b) / 255.0).min(1.0) * alpha;
+        // 将 sRGB 颜色转换为线性空间
+        let r = srgb_to_linear_f32(color.r).min(1.0) * alpha;
+        let g = srgb_to_linear_f32(color.g).min(1.0) * alpha;
+        let b = srgb_to_linear_f32(color.b).min(1.0) * alpha;
 
         let _rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("clear_pass"),
@@ -1000,9 +1019,10 @@ impl WgpuRenderer {
         let height = rect.height / half_height;
         let (r, g, b) = rect.color.as_tuple();
         let a = rect.alpha;
-        let r = r as f32 / 255.0;
-        let g = g as f32 / 255.0;
-        let b = b as f32 / 255.0;
+        // 将 sRGB 颜色转换为线性空间
+        let r = srgb_to_linear_f32(r);
+        let g = srgb_to_linear_f32(g);
+        let b = srgb_to_linear_f32(b);
 
         // 两个三角形构成一个四边形
         let quad = [

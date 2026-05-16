@@ -10,16 +10,13 @@ use toml_edit::{DocumentMut, Item};
 use crate::cli::MigrateOptions;
 use crate::config;
 
-mod yaml;
-
 /// Handle migration.
 pub fn migrate(options: MigrateOptions) {
     // Find configuration file path.
     let config_path = options
         .config_file
         .clone()
-        .or_else(|| config::installed_config("toml"))
-        .or_else(|| config::installed_config("yml"));
+        .or_else(|| config::installed_config("toml"));
 
     // Abort if system has no installed configuration.
     let config_path = match config_path {
@@ -27,7 +24,7 @@ pub fn migrate(options: MigrateOptions) {
         None => {
             eprintln!("No configuration file found");
             std::process::exit(1);
-        },
+        }
     };
 
     // If we're doing a wet run, perform a dry run first for safety.
@@ -49,12 +46,12 @@ pub fn migrate(options: MigrateOptions) {
             if !options.silent {
                 println!("{}", migration.success_message(false));
             }
-        },
+        }
         Err(err) => {
             eprintln!("Configuration file migration failed:");
             eprintln!("    {config_path:?}: {err}");
             std::process::exit(1);
-        },
+        }
     }
 }
 
@@ -64,19 +61,6 @@ fn migrate_config<'a>(
     path: &'a Path,
     recursion_limit: usize,
 ) -> Result<Migration<'a>, String> {
-    // Ensure configuration file has an extension.
-    let path_str = path.to_string_lossy();
-    let (prefix, suffix) = match path_str.rsplit_once('.') {
-        Some((prefix, suffix)) => (prefix, suffix),
-        None => return Err("missing file extension".to_string()),
-    };
-
-    // Handle legacy YAML files.
-    if suffix == "yml" {
-        let new_path = yaml::migrate(options, path, recursion_limit, prefix)?;
-        return Ok(Migration::Yaml((path, new_path)));
-    }
-
     // TOML only does renames, so return early if they are disabled.
     if options.skip_renames {
         if options.dry_run {
@@ -107,18 +91,27 @@ fn migrate_toml(toml: String) -> Result<DocumentMut, String> {
     };
 
     // Move `draw_bold_text_with_bright_colors` to its own section.
-    move_value(&mut document, &["draw_bold_text_with_bright_colors"], &[
-        "colors",
-        "draw_bold_text_with_bright_colors",
-    ])?;
+    move_value(
+        &mut document,
+        &["draw_bold_text_with_bright_colors"],
+        &["colors", "draw_bold_text_with_bright_colors"],
+    )?;
 
     // Move bindings to their own section.
     move_value(&mut document, &["key_bindings"], &["keyboard", "bindings"])?;
     move_value(&mut document, &["mouse_bindings"], &["mouse", "bindings"])?;
 
     // Avoid warnings due to introduction of the new `general` section.
-    move_value(&mut document, &["live_config_reload"], &["general", "live_config_reload"])?;
-    move_value(&mut document, &["working_directory"], &["general", "working_directory"])?;
+    move_value(
+        &mut document,
+        &["live_config_reload"],
+        &["general", "live_config_reload"],
+    )?;
+    move_value(
+        &mut document,
+        &["working_directory"],
+        &["general", "working_directory"],
+    )?;
     move_value(&mut document, &["ipc_socket"], &["general", "ipc_socket"])?;
     move_value(&mut document, &["import"], &["general", "import"])?;
     move_value(&mut document, &["shell"], &["terminal", "shell"])?;
@@ -154,7 +147,10 @@ fn migrate_imports(
 
         if !normalized_path.exists() {
             if options.dry_run {
-                println!("Skipping migration for nonexistent path: {}", normalized_path.display());
+                println!(
+                    "Skipping migration for nonexistent path: {}",
+                    normalized_path.display()
+                );
             }
             continue;
         }
@@ -239,7 +235,8 @@ where
         let tmp = NamedTempFile::new_in(path.parent().unwrap())
             .map_err(|err| format!("could not create temporary file: {err}"))?;
         fs::write(tmp.path(), toml).map_err(|err| format!("filesystem error: {err}"))?;
-        tmp.persist(path).map_err(|err| format!("atomic replacement failed: {err}"))?;
+        tmp.persist(path)
+            .map_err(|err| format!("atomic replacement failed: {err}"))?;
     }
     Ok(())
 }
@@ -248,23 +245,15 @@ where
 enum Migration<'a> {
     /// In-place TOML migration.
     Toml(&'a Path),
-    /// YAML to TOML migration.
-    Yaml((&'a Path, String)),
 }
 
 impl Migration<'_> {
     /// Get the success message for this migration.
     fn success_message(&self, import: bool) -> String {
         match self {
-            Self::Yaml((original_path, new_path)) if import => {
-                format!("Successfully migrated import {original_path:?} to {new_path:?}")
-            },
-            Self::Yaml((original_path, new_path)) => {
-                format!("Successfully migrated {original_path:?} to {new_path:?}")
-            },
             Self::Toml(original_path) if import => {
                 format!("Successfully migrated import {original_path:?}")
-            },
+            }
             Self::Toml(original_path) => format!("Successfully migrated {original_path:?}"),
         }
     }
@@ -273,7 +262,6 @@ impl Migration<'_> {
     fn new_path(&self) -> String {
         match self {
             Self::Toml(path) => path.to_string_lossy().into(),
-            Self::Yaml((_, path)) => path.into(),
         }
     }
 }
@@ -300,11 +288,11 @@ not_moved = 9
         let mut document = input.parse::<DocumentMut>().unwrap();
 
         move_value(&mut document, &["root_value"], &["new_table", "root_value"]).unwrap();
-        move_value(&mut document, &["table", "table_value"], &[
-            "preexisting",
-            "subtable",
-            "new_name",
-        ])
+        move_value(
+            &mut document,
+            &["table", "table_value"],
+            &["preexisting", "subtable", "new_name"],
+        )
         .unwrap();
 
         let output = document.to_string();

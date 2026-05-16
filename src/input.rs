@@ -174,33 +174,33 @@ impl<T: EventListener> Execute<T> for Action {
             Action::Hint(hint) => {
                 ctx.display().hint_state.start(hint.clone());
                 ctx.mark_dirty();
-            },
+            }
             Action::ToggleViMode => {
                 ctx.on_typing_start();
                 ctx.toggle_vi_mode()
-            },
+            }
             action @ (Action::ViMotion(_) | Action::Vi(_))
                 if !ctx.terminal().mode().contains(TermMode::VI) =>
             {
                 debug!("Ignoring {action:?}: Vi mode inactive");
-            },
+            }
             Action::ViMotion(motion) => {
                 ctx.on_typing_start();
                 ctx.terminal_mut().vi_motion(*motion);
                 ctx.mark_dirty();
-            },
+            }
             Action::Vi(ViAction::ToggleNormalSelection) => {
                 Self::toggle_selection(ctx, SelectionType::Simple);
-            },
+            }
             Action::Vi(ViAction::ToggleLineSelection) => {
                 Self::toggle_selection(ctx, SelectionType::Lines);
-            },
+            }
             Action::Vi(ViAction::ToggleBlockSelection) => {
                 Self::toggle_selection(ctx, SelectionType::Block);
-            },
+            }
             Action::Vi(ViAction::ToggleSemanticSelection) => {
                 Self::toggle_selection(ctx, SelectionType::Semantic);
-            },
+            }
             Action::Vi(ViAction::Open) => {
                 let hint = ctx.display().vi_highlighted_hint.take();
                 if let Some(hint) = &hint {
@@ -208,7 +208,7 @@ impl<T: EventListener> Execute<T> for Action {
                     ctx.trigger_hint(hint);
                 }
                 ctx.display().vi_highlighted_hint = hint;
-            },
+            }
             Action::Vi(ViAction::SearchNext) => {
                 ctx.on_typing_start();
 
@@ -224,7 +224,7 @@ impl<T: EventListener> Execute<T> for Action {
                     ctx.terminal_mut().vi_goto_point(*regex_match.start());
                     ctx.mark_dirty();
                 }
-            },
+            }
             Action::Vi(ViAction::SearchPrevious) => {
                 ctx.on_typing_start();
 
@@ -240,25 +240,31 @@ impl<T: EventListener> Execute<T> for Action {
                     ctx.terminal_mut().vi_goto_point(*regex_match.start());
                     ctx.mark_dirty();
                 }
-            },
+            }
             Action::Vi(ViAction::SearchStart) => {
                 let terminal = ctx.terminal();
-                let origin = terminal.vi_mode_cursor.point.sub(terminal, Boundary::None, 1);
+                let origin = terminal
+                    .vi_mode_cursor
+                    .point
+                    .sub(terminal, Boundary::None, 1);
 
                 if let Some(regex_match) = ctx.search_next(origin, Direction::Left, Side::Left) {
                     ctx.terminal_mut().vi_goto_point(*regex_match.start());
                     ctx.mark_dirty();
                 }
-            },
+            }
             Action::Vi(ViAction::SearchEnd) => {
                 let terminal = ctx.terminal();
-                let origin = terminal.vi_mode_cursor.point.add(terminal, Boundary::None, 1);
+                let origin = terminal
+                    .vi_mode_cursor
+                    .point
+                    .add(terminal, Boundary::None, 1);
 
                 if let Some(regex_match) = ctx.search_next(origin, Direction::Right, Side::Right) {
                     ctx.terminal_mut().vi_goto_point(*regex_match.end());
                     ctx.mark_dirty();
                 }
-            },
+            }
             Action::Vi(ViAction::CenterAroundViCursor) => {
                 let term = ctx.terminal();
                 let display_offset = term.grid().display_offset() as i32;
@@ -267,19 +273,19 @@ impl<T: EventListener> Execute<T> for Action {
                 let scroll_lines = target - line.0;
 
                 ctx.scroll(Scroll::Delta(scroll_lines));
-            },
+            }
             Action::Vi(ViAction::InlineSearchForward) => {
                 ctx.start_inline_search(Direction::Right, false)
-            },
+            }
             Action::Vi(ViAction::InlineSearchBackward) => {
                 ctx.start_inline_search(Direction::Left, false)
-            },
+            }
             Action::Vi(ViAction::InlineSearchForwardShort) => {
                 ctx.start_inline_search(Direction::Right, true)
-            },
+            }
             Action::Vi(ViAction::InlineSearchBackwardShort) => {
                 ctx.start_inline_search(Direction::Left, true)
-            },
+            }
             Action::Vi(ViAction::InlineSearchNext) => ctx.inline_search_next(),
             Action::Vi(ViAction::InlineSearchPrevious) => ctx.inline_search_previous(),
             Action::Vi(ViAction::SemanticSearchForward | ViAction::SemanticSearchBackward) => {
@@ -296,24 +302,24 @@ impl<T: EventListener> Execute<T> for Action {
                     };
                     ctx.start_seeded_search(direction, seed_text);
                 }
-            },
+            }
             action @ Action::Search(_) if !ctx.search_active() => {
                 debug!("Ignoring {action:?}: Search mode inactive");
-            },
+            }
             Action::Search(SearchAction::SearchFocusNext) => {
                 ctx.advance_search_origin(ctx.search_direction());
-            },
+            }
             Action::Search(SearchAction::SearchFocusPrevious) => {
                 let direction = ctx.search_direction().opposite();
                 ctx.advance_search_origin(direction);
-            },
+            }
             Action::Search(SearchAction::SearchConfirm) => ctx.confirm_search(),
             Action::Search(SearchAction::SearchCancel) => ctx.cancel_search(),
             Action::Search(SearchAction::SearchClear) => {
                 let direction = ctx.search_direction();
                 ctx.cancel_search();
                 ctx.start_search(direction);
-            },
+            }
             Action::Search(SearchAction::SearchDeleteWord) => ctx.search_pop_word(),
             Action::Search(SearchAction::SearchHistoryPrevious) => ctx.search_history_previous(),
             Action::Search(SearchAction::SearchHistoryNext) => ctx.search_history_next(),
@@ -327,11 +333,11 @@ impl<T: EventListener> Execute<T> for Action {
             Action::Paste => {
                 let text = ctx.clipboard_mut().load(ClipboardType::Clipboard);
                 ctx.paste(&text, true);
-            },
+            }
             Action::PasteSelection => {
                 let text = ctx.clipboard_mut().load(ClipboardType::Selection);
                 ctx.paste(&text, true);
-            },
+            }
             Action::ToggleFullscreen => ctx.window().toggle_fullscreen(),
             Action::ToggleMaximized => ctx.window().toggle_maximized(),
             #[cfg(target_os = "macos")]
@@ -346,7 +352,7 @@ impl<T: EventListener> Execute<T> for Action {
             Action::Quit => {
                 ctx.window().hold = false;
                 ctx.terminal_mut().exit();
-            },
+            }
             Action::IncreaseFontSize => ctx.change_font_size(FONT_SIZE_STEP),
             Action::DecreaseFontSize => ctx.change_font_size(-FONT_SIZE_STEP),
             Action::ResetFontSize => ctx.reset_font_size(),
@@ -362,11 +368,11 @@ impl<T: EventListener> Execute<T> for Action {
                     Action::ScrollHalfPageUp => {
                         let amount = term.screen_lines() as i32 / 2;
                         (Scroll::Delta(amount), amount)
-                    },
+                    }
                     Action::ScrollHalfPageDown => {
                         let amount = -(term.screen_lines() as i32 / 2);
                         (Scroll::Delta(amount), amount)
-                    },
+                    }
                     _ => unreachable!(),
                 };
 
@@ -377,7 +383,7 @@ impl<T: EventListener> Execute<T> for Action {
                 }
 
                 ctx.scroll(scroll);
-            },
+            }
             Action::ScrollLineUp => ctx.scroll(Scroll::Delta(1)),
             Action::ScrollLineDown => ctx.scroll(Scroll::Delta(-1)),
             Action::ScrollToTop => {
@@ -388,7 +394,7 @@ impl<T: EventListener> Execute<T> for Action {
                 ctx.terminal_mut().vi_mode_cursor.point.line = topmost_line;
                 ctx.terminal_mut().vi_motion(ViMotion::FirstOccupied);
                 ctx.mark_dirty();
-            },
+            }
             Action::ScrollToBottom => {
                 ctx.scroll(Scroll::Bottom);
 
@@ -400,7 +406,7 @@ impl<T: EventListener> Execute<T> for Action {
                 term.vi_motion(ViMotion::FirstOccupied);
                 term.vi_motion(ViMotion::FirstOccupied);
                 ctx.mark_dirty();
-            },
+            }
             Action::ClearHistory => ctx.terminal_mut().clear_screen(ClearMode::Saved),
             Action::ClearLogNotice => ctx.pop_message(),
             #[cfg(not(target_os = "macos"))]
@@ -415,7 +421,7 @@ impl<T: EventListener> Execute<T> for Action {
                     let tabbing_id = Some(ctx.window().tabbing_id());
                     ctx.create_new_window(tabbing_id);
                 }
-            },
+            }
             #[cfg(target_os = "macos")]
             Action::SelectNextTab => ctx.window().select_next_tab(),
             #[cfg(target_os = "macos")]
@@ -447,7 +453,10 @@ impl<T: EventListener> Execute<T> for Action {
 
 impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
     pub fn new(ctx: A) -> Self {
-        Self { ctx, _phantom: Default::default() }
+        Self {
+            ctx,
+            _phantom: Default::default(),
+        }
     }
 
     #[inline]
@@ -502,7 +511,11 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         {
             self.ctx.update_selection(point, cell_side);
         } else if cell_changed
-            && self.ctx.terminal().mode().intersects(TermMode::MOUSE_MOTION | TermMode::MOUSE_DRAG)
+            && self
+                .ctx
+                .terminal()
+                .mode()
+                .intersects(TermMode::MOUSE_MOTION | TermMode::MOUSE_DRAG)
         {
             if lmb_pressed {
                 self.mouse_report(32, ElementState::Pressed);
@@ -540,7 +553,10 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
 
     fn mouse_report(&mut self, button: u8, state: ElementState) {
         let display_offset = self.ctx.terminal().grid().display_offset();
-        let point = self.ctx.mouse().point(&self.ctx.size_info(), display_offset);
+        let point = self
+            .ctx
+            .mouse()
+            .point(&self.ctx.size_info(), display_offset);
 
         // Assure the mouse point is not in the scrollback.
         if point.line < 0 {
@@ -610,7 +626,13 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
             ElementState::Released => 'm',
         };
 
-        let msg = format!("\x1b[<{};{};{}{}", button, point.column + 1, point.line + 1, c);
+        let msg = format!(
+            "\x1b[<{};{};{}{}",
+            button,
+            point.column + 1,
+            point.line + 1,
+            c
+        );
         self.ctx.write_to_pty(msg.into_bytes());
     }
 
@@ -640,7 +662,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
                 _ if button != self.ctx.mouse().last_click_button => {
                     self.ctx.mouse_mut().last_click_button = button;
                     ClickState::Click
-                },
+                }
                 ClickState::Click if elapsed < CLICK_THRESHOLD => ClickState::DoubleClick,
                 ClickState::DoubleClick if elapsed < CLICK_THRESHOLD => ClickState::TripleClick,
                 _ => ClickState::Click,
@@ -648,7 +670,10 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
 
             // Load mouse point, treating message bar and padding as the closest cell.
             let display_offset = self.ctx.terminal().grid().display_offset();
-            let point = self.ctx.mouse().point(&self.ctx.size_info(), display_offset);
+            let point = self
+                .ctx
+                .mouse()
+                .point(&self.ctx.size_info(), display_offset);
 
             if let MouseButton::Left = button {
                 self.on_left_click(point)
@@ -674,15 +699,16 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
                 } else {
                     self.ctx.start_selection(SelectionType::Simple, point, side);
                 }
-            },
+            }
             ClickState::DoubleClick if !control => {
                 self.ctx.mouse_mut().block_hint_launcher = true;
-                self.ctx.start_selection(SelectionType::Semantic, point, side);
-            },
+                self.ctx
+                    .start_selection(SelectionType::Semantic, point, side);
+            }
             ClickState::TripleClick if !control => {
                 self.ctx.mouse_mut().block_hint_launcher = true;
                 self.ctx.start_selection(SelectionType::Lines, point, side);
-            },
+            }
             _ => (),
         };
 
@@ -733,13 +759,13 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
                     new_scroll_px_y as f64,
                     multiplier as f64,
                 );
-            },
+            }
             MouseScrollDelta::PixelDelta(mut lpos) => {
                 match phase {
                     TouchPhase::Started => {
                         // Reset offset to zero.
                         self.ctx.mouse_mut().accumulated_scroll = Default::default();
-                    },
+                    }
                     TouchPhase::Moved => {
                         // When the angle between (x, 0) and (x, y) is lower than ~25 degrees
                         // (cosine is larger that 0.9) we consider this scrolling as horizontal.
@@ -750,10 +776,10 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
                         }
 
                         self.scroll_terminal(lpos.x, lpos.y, multiplier as f64);
-                    },
+                    }
                     _ => (),
                 }
-            },
+            }
         }
     }
 
@@ -766,7 +792,11 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         let width = f64::from(self.ctx.size_info().cell_width());
         let height = f64::from(self.ctx.size_info().cell_height());
 
-        let multiplier = if self.ctx.mouse_mode() { 1. } else { multiplier };
+        let multiplier = if self.ctx.mouse_mode() {
+            1.
+        } else {
+            multiplier
+        };
 
         self.ctx.mouse_mut().accumulated_scroll.x += new_scroll_x_px * multiplier;
         self.ctx.mouse_mut().accumulated_scroll.y += new_scroll_y_px * multiplier;
@@ -775,7 +805,11 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         let columns = (self.ctx.mouse().accumulated_scroll.x / width).abs() as usize;
 
         let is_scroll_up = new_scroll_y_px > 0.;
-        let event = if is_scroll_up { MouseEvent::WheelUp } else { MouseEvent::WheelDown };
+        let event = if is_scroll_up {
+            MouseEvent::WheelUp
+        } else {
+            MouseEvent::WheelDown
+        };
 
         if lines != 0 && self.process_mouse_bindings(event) {
             // Repeat for remaining number of lines.
@@ -783,12 +817,20 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
                 self.process_mouse_bindings(event);
             }
         } else if self.ctx.mouse_mode() {
-            let code = if is_scroll_up { MOUSE_WHEEL_UP } else { MOUSE_WHEEL_DOWN };
+            let code = if is_scroll_up {
+                MOUSE_WHEEL_UP
+            } else {
+                MOUSE_WHEEL_DOWN
+            };
             for _ in 0..lines {
                 self.mouse_report(code, ElementState::Pressed);
             }
 
-            let code = if new_scroll_x_px > 0. { MOUSE_WHEEL_LEFT } else { MOUSE_WHEEL_RIGHT };
+            let code = if new_scroll_x_px > 0. {
+                MOUSE_WHEEL_LEFT
+            } else {
+                MOUSE_WHEEL_RIGHT
+            };
             for _ in 0..columns {
                 self.mouse_report(code, ElementState::Pressed);
             }
@@ -819,7 +861,11 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
 
             self.ctx.write_to_pty(content);
         } else if lines != 0 {
-            let lines = if is_scroll_up { lines as i32 } else { -(lines as i32) };
+            let lines = if is_scroll_up {
+                lines as i32
+            } else {
+                -(lines as i32)
+            };
             self.ctx.scroll(Scroll::Delta(lines));
         }
 
@@ -849,7 +895,9 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
     pub fn on_touch_start(&mut self, touch: TouchEvent) {
         // Inhibit IME on touch while not focused, forcing a touch tap while focused to enable IME.
         if !self.ctx.terminal().is_focused {
-            self.ctx.window().set_ime_inhibitor(ImeInhibitor::TOUCH, true);
+            self.ctx
+                .window()
+                .set_ime_inhibitor(ImeInhibitor::TOUCH, true);
         }
 
         let touch_purpose = self.ctx.touch_purpose();
@@ -858,23 +906,23 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
             TouchPurpose::Tap(start) => TouchPurpose::Zoom(TouchZoom::new((start, touch))),
             TouchPurpose::ZoomPendingSlot(slot) => {
                 TouchPurpose::Zoom(TouchZoom::new((slot, touch)))
-            },
+            }
             TouchPurpose::Zoom(zoom) => {
                 let slots = zoom.slots();
                 let mut set = HashSet::default();
                 set.insert(slots.0.id);
                 set.insert(slots.1.id);
                 TouchPurpose::Invalid(set)
-            },
+            }
             TouchPurpose::Scroll(event) | TouchPurpose::Select(event) => {
                 let mut set = HashSet::default();
                 set.insert(event.id);
                 TouchPurpose::Invalid(set)
-            },
+            }
             TouchPurpose::Invalid(mut slots) => {
                 slots.insert(touch.id);
                 TouchPurpose::Invalid(slots)
-            },
+            }
         };
     }
 
@@ -905,11 +953,11 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
                     // Apply motion since touch start.
                     self.on_touch_motion(touch);
                 }
-            },
+            }
             TouchPurpose::Zoom(zoom) => {
                 let font_delta = zoom.font_delta(touch);
                 self.ctx.change_font_size(font_delta);
-            },
+            }
             TouchPurpose::Scroll(last_touch) => {
                 // Calculate delta and update last touch position.
                 let delta_y = touch.location.y - last_touch.location.y;
@@ -917,7 +965,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
 
                 // Use a fixed scroll factor for touchscreens, to accurately track finger motion.
                 self.scroll_terminal(0., delta_y, 1.0);
-            },
+            }
             TouchPurpose::Select(_) => self.mouse_moved(touch.location),
             TouchPurpose::ZoomPendingSlot(_) | TouchPurpose::Invalid(_) => (),
         }
@@ -939,14 +987,20 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
                 self.mouse_input(ElementState::Pressed, MouseButton::Left);
                 self.mouse_input(ElementState::Released, MouseButton::Left);
 
-                self.ctx.window().set_ime_inhibitor(ImeInhibitor::TOUCH, false);
-            },
+                self.ctx
+                    .window()
+                    .set_ime_inhibitor(ImeInhibitor::TOUCH, false);
+            }
             // Transition zoom to pending state once a finger was released.
             TouchPurpose::Zoom(zoom) => {
                 let slots = zoom.slots();
-                let remaining = if slots.0.id == touch.id { slots.1 } else { slots.0 };
+                let remaining = if slots.0.id == touch.id {
+                    slots.1
+                } else {
+                    slots.0
+                };
                 *touch_purpose = TouchPurpose::ZoomPendingSlot(remaining);
-            },
+            }
             TouchPurpose::ZoomPendingSlot(_) => *touch_purpose = Default::default(),
             // Reset touch state once all slots were released.
             TouchPurpose::Invalid(slots) => {
@@ -954,12 +1008,12 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
                 if slots.is_empty() {
                     *touch_purpose = Default::default();
                 }
-            },
+            }
             // Release simulated LMB.
             TouchPurpose::Select(_) => {
                 *touch_purpose = Default::default();
                 self.mouse_input(ElementState::Released, MouseButton::Left);
-            },
+            }
             // Reset touch state on scroll finish.
             TouchPurpose::Scroll(_) => *touch_purpose = Default::default(),
             TouchPurpose::None => (),
@@ -1016,7 +1070,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
                     } else {
                         CursorIcon::Text
                     }
-                },
+                }
             };
 
             self.ctx.window().set_mouse_cursor(new_icon);
@@ -1026,7 +1080,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
                     // Process mouse press before bindings to update the `click_state`.
                     self.on_mouse_press(button);
                     self.process_mouse_bindings(MouseEvent::Button(button));
-                },
+                }
                 ElementState::Released => self.on_mouse_release(button),
             }
         }
@@ -1079,7 +1133,10 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
 
         let mouse = self.ctx.mouse();
         let display_offset = self.ctx.terminal().grid().display_offset();
-        let point = self.ctx.mouse().point(&self.ctx.size_info(), display_offset);
+        let point = self
+            .ctx
+            .mouse()
+            .point(&self.ctx.size_info(), display_offset);
 
         if self.ctx.message().is_none() || (mouse.y <= terminal_end) {
             None
@@ -1095,7 +1152,10 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
     /// Icon state of the cursor.
     fn cursor_state(&mut self) -> CursorIcon {
         let display_offset = self.ctx.terminal().grid().display_offset();
-        let point = self.ctx.mouse().point(&self.ctx.size_info(), display_offset);
+        let point = self
+            .ctx
+            .mouse()
+            .point(&self.ctx.size_info(), display_offset);
         let hyperlink = self.ctx.terminal().grid()[point].hyperlink();
 
         // Function to check if mouse is on top of a hint.
@@ -1103,7 +1163,13 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
 
         if let Some(mouse_state) = self.message_bar_cursor_state() {
             mouse_state
-        } else if self.ctx.display().highlighted_hint.as_ref().is_some_and(hint_highlighted) {
+        } else if self
+            .ctx
+            .display()
+            .highlighted_hint
+            .as_ref()
+            .is_some_and(hint_highlighted)
+        {
             CursorIcon::Pointer
         } else if !self.ctx.modifiers().state().shift_key() && self.ctx.mouse_mode() {
             CursorIcon::Default
@@ -1139,7 +1205,10 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         };
 
         // Scale number of lines scrolled based on distance to boundary.
-        let event = Event::new(EventType::Scroll(Scroll::Delta(delta / step)), Some(window_id));
+        let event = Event::new(
+            EventType::Scroll(Scroll::Delta(delta / step)),
+            Some(window_id),
+        );
 
         // Schedule event.
         let timer_id = TimerId::new(Topic::SelectionScrolling, window_id);
