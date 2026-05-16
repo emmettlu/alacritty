@@ -90,9 +90,3 @@ winit = { version = "0", default-features = false, features = [
 
 [target.'cfg(windows)'.build-dependencies]
 embed-resource = "3"
-
-[features]
-default = []
-nightly = []
-wayland = []
-x11 = []
