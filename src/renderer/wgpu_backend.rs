@@ -103,8 +103,11 @@ struct AtlasBindGroup {
     bind_group: wgpu::BindGroup,
 }
 
-/// 最大批量实例数
-const BATCH_MAX: usize = 0x1_0000;
+/// 最大批量实例数.
+///
+/// 终端一帧通常远小于 8192 个可见 cell, 超出时绘制路径已经支持分批.
+/// 避免启动时为极端场景固定分配 0x1_0000 个实例的 GPU buffer.
+const BATCH_MAX: usize = 8192;
 
 /// Rendering glyph flags - 与着色器保持同步
 const COLORED_FLAG: u32 = 1;

@@ -423,7 +423,8 @@ impl Display {
         };
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
+            // 终端渲染负载很低, 优先集显/低功耗适配器可以避免启动独显带来的显存基线.
+            power_preference: wgpu::PowerPreference::LowPower,
             compatible_surface: Some(&wgpu_surface),
             force_fallback_adapter: false,
         }))
@@ -448,11 +449,15 @@ impl Display {
         info!("wgpu surface format: {:?}", surface_format);
 
         let alpha_mode = if config.window_opacity() < 1.0
-            && caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::PreMultiplied)
+            && caps
+                .alpha_modes
+                .contains(&wgpu::CompositeAlphaMode::PreMultiplied)
         {
             wgpu::CompositeAlphaMode::PreMultiplied
         } else if config.window_opacity() < 1.0
-            && caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::PostMultiplied)
+            && caps
+                .alpha_modes
+                .contains(&wgpu::CompositeAlphaMode::PostMultiplied)
         {
             wgpu::CompositeAlphaMode::PostMultiplied
         } else {
@@ -467,7 +472,7 @@ impl Display {
             alpha_mode,
             width: viewport_size.width.max(1),
             height: viewport_size.height.max(1),
-            desired_maximum_frame_latency: 2,
+            desired_maximum_frame_latency: 1,
             present_mode: wgpu::PresentMode::AutoNoVsync,
         };
         wgpu_surface.configure(&device, &wgpu_surface_config);
@@ -497,8 +502,16 @@ impl Display {
         );
 
         info!("Cell size: {cell_width} x {cell_height}");
-        info!("Padding: {} x {}", size_info.padding_x(), size_info.padding_y());
-        info!("Width: {}, Height: {}", size_info.width(), size_info.height());
+        info!(
+            "Padding: {} x {}",
+            size_info.padding_x(),
+            size_info.padding_y()
+        );
+        info!(
+            "Width: {}, Height: {}",
+            size_info.width(),
+            size_info.height()
+        );
 
         // 清屏.
         let background_color = config.colors.primary.background;
@@ -509,9 +522,16 @@ impl Display {
                 | wgpu::CurrentSurfaceTexture::Suboptimal(output) => output,
                 status => return Err(Error::Wgpu(format!("get current texture: {status:?}"))),
             };
-            let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let view = output
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
             let mut encoder = device.create_command_encoder(&Default::default());
-            wgpu_renderer.clear(&mut encoder, &view, background_color, config.window_opacity());
+            wgpu_renderer.clear(
+                &mut encoder,
+                &view,
+                background_color,
+                config.window_opacity(),
+            );
             queue.submit(std::iter::once(encoder.finish()));
             output.present();
         }
@@ -602,7 +622,9 @@ impl Display {
             (self.size_info.cell_width(), self.size_info.cell_height());
 
         if pending_update.font().is_some() || pending_update.cursor_dirty() {
-            let renderer_update = self.pending_renderer_update.get_or_insert(Default::default());
+            let renderer_update = self
+                .pending_renderer_update
+                .get_or_insert(Default::default());
             renderer_update.clear_font_cache = true
         }
 
@@ -639,13 +661,16 @@ impl Display {
 
         // Update number of column/lines in the viewport.
         let search_active = search_state.history_index.is_some();
-        let message_bar_lines = message_buffer.message().map_or(0, |m| m.text(&new_size).len());
+        let message_bar_lines = message_buffer
+            .message()
+            .map_or(0, |m| m.text(&new_size).len());
         let search_lines = usize::from(search_active);
         new_size.reserve_lines(message_bar_lines + search_lines);
 
         // Update resize increments.
         if config.window.resize_increments {
-            self.window.set_resize_increments(PhysicalSize::new(cell_width, cell_height));
+            self.window
+                .set_resize_increments(PhysicalSize::new(cell_width, cell_height));
         }
 
         // Resize when terminal when its dimensions have changed.
@@ -659,13 +684,16 @@ impl Display {
             terminal.resize(new_size);
 
             // Resize damage tracking.
-            self.damage_tracker.resize(new_size.screen_lines(), new_size.columns());
+            self.damage_tracker
+                .resize(new_size.screen_lines(), new_size.columns());
         }
 
         // Check if dimensions have changed.
         if new_size != self.size_info {
             // Queue renderer update.
-            let renderer_update = self.pending_renderer_update.get_or_insert(Default::default());
+            let renderer_update = self
+                .pending_renderer_update
+                .get_or_insert(Default::default());
             renderer_update.resize = true;
 
             // Clear focused search match.
@@ -687,7 +715,8 @@ impl Display {
             if size.width > 0 && size.height > 0 {
                 self.wgpu_surface_config.width = size.width;
                 self.wgpu_surface_config.height = size.height;
-                self.wgpu_surface.configure(self.wgpu_renderer.device(), &self.wgpu_surface_config);
+                self.wgpu_surface
+                    .configure(self.wgpu_renderer.device(), &self.wgpu_surface_config);
             }
         }
 
@@ -697,8 +726,16 @@ impl Display {
 
         self.wgpu_renderer.resize(&self.size_info);
 
-        info!("Padding: {} x {}", self.size_info.padding_x(), self.size_info.padding_y());
-        info!("Width: {}, Height: {}", self.size_info.width(), self.size_info.height());
+        info!(
+            "Padding: {} x {}",
+            self.size_info.padding_x(),
+            self.size_info.padding_y()
+        );
+        info!(
+            "Width: {}, Height: {}",
+            self.size_info.width(),
+            self.size_info.height()
+        );
     }
 
     /// Synchronize the wgpu surface with the actual window size.
@@ -717,7 +754,8 @@ impl Display {
         self.pending_update.set_dimensions(size);
         self.wgpu_surface_config.width = size.width;
         self.wgpu_surface_config.height = size.height;
-        self.wgpu_surface.configure(self.wgpu_renderer.device(), &self.wgpu_surface_config);
+        self.wgpu_surface
+            .configure(self.wgpu_renderer.device(), &self.wgpu_surface_config);
     }
 
     /// Draw the screen.
@@ -751,7 +789,11 @@ impl Display {
         let size_info = self.size_info;
 
         let vi_mode = terminal.mode().contains(TermMode::VI);
-        let vi_cursor_point = if vi_mode { Some(terminal.vi_mode_cursor.point) } else { None };
+        let vi_cursor_point = if vi_mode {
+            Some(terminal.vi_mode_cursor.point)
+        } else {
+            None
+        };
 
         // 添加终端损伤.
         match terminal.damage() {
@@ -760,7 +802,7 @@ impl Display {
                 for damage in damaged_lines {
                     self.damage_tracker.frame().damage_line(damage);
                 }
-            },
+            }
         }
         terminal.reset_damage();
 
@@ -784,8 +826,10 @@ impl Display {
 
         let vi_cursor_viewport_point =
             vi_cursor_point.and_then(|cursor| term::point_to_viewport(display_offset, cursor));
-        self.damage_tracker.damage_vi_cursor(vi_cursor_viewport_point);
-        self.damage_tracker.damage_selection(selection_range, display_offset);
+        self.damage_tracker
+            .damage_vi_cursor(vi_cursor_viewport_point);
+        self.damage_tracker
+            .damage_selection(selection_range, display_offset);
 
         // 获取 surface texture.
         let output = match self.wgpu_surface.get_current_texture() {
@@ -793,7 +837,7 @@ impl Display {
             wgpu::CurrentSurfaceTexture::Suboptimal(output) => {
                 self.sync_wgpu_surface_size();
                 output
-            },
+            }
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 // 重新配置 surface.
                 self.sync_wgpu_surface_size();
@@ -803,19 +847,29 @@ impl Display {
                     status => {
                         debug!("wgpu get_current_texture error after reconfigure: {status:?}");
                         return;
-                    },
+                    }
                 }
-            },
+            }
             status => {
                 debug!("wgpu get_current_texture error: {status:?}");
                 return;
-            },
+            }
         };
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self.wgpu_renderer.device().create_command_encoder(&Default::default());
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self
+            .wgpu_renderer
+            .device()
+            .create_command_encoder(&Default::default());
 
         // 清屏.
-        self.wgpu_renderer.clear(&mut encoder, &view, background_color, config.window_opacity());
+        self.wgpu_renderer.clear(
+            &mut encoder,
+            &view,
+            background_color,
+            config.window_opacity(),
+        );
 
         let mut lines = RenderLines::new();
 
@@ -835,8 +889,10 @@ impl Display {
                 .map(|mut cell| {
                     if has_highlighted_hint {
                         let point = term::viewport_to_point(display_offset, cell.point);
-                        let hyperlink =
-                            cell.extra.as_ref().and_then(|extra| extra.hyperlink.as_ref());
+                        let hyperlink = cell
+                            .extra
+                            .as_ref()
+                            .and_then(|extra| extra.hyperlink.as_ref());
 
                         let should_highlight = |hint: &Option<HintMatch>| {
                             hint.as_ref()
@@ -929,7 +985,7 @@ impl Display {
                     rects.extend(cursor.rects(&size_info, config.cursor.thickness()));
                 }
                 Some(Point::new(line, column))
-            },
+            }
             None => {
                 let num_lines = self.size_info.screen_lines();
                 match vi_cursor_viewport_point {
@@ -937,7 +993,7 @@ impl Display {
                         .filter(|point| point.line < num_lines),
                     point => point,
                 }
-            },
+            }
         };
 
         // IME.
@@ -945,7 +1001,10 @@ impl Display {
             && let Some(point) = ime_position
         {
             let (fg, bg) = if search_state.regex().is_some() {
-                (config.colors.footer_bar_foreground(), config.colors.footer_bar_background())
+                (
+                    config.colors.footer_bar_foreground(),
+                    config.colors.footer_bar_background(),
+                )
             } else {
                 (foreground_color, background_color)
             };
@@ -957,7 +1016,9 @@ impl Display {
             let text = message.text(&size_info);
 
             let start_line = size_info.screen_lines() + search_offset;
-            let y = size_info.cell_height().mul_add(start_line as f32, size_info.padding_y());
+            let y = size_info
+                .cell_height()
+                .mul_add(start_line as f32, size_info.padding_y());
 
             let bg = match message.ty() {
                 MessageType::Error => config.colors.normal.red,
@@ -971,10 +1032,13 @@ impl Display {
                 RenderRect::new(x as f32, y, width as f32, height as f32, bg, 1.);
             rects.push(message_bar_rect);
 
-            self.damage_tracker.frame().add_viewport_rect(&size_info, x, y as i32, width, height);
+            self.damage_tracker
+                .frame()
+                .add_viewport_rect(&size_info, x, y as i32, width, height);
 
             // 绘制矩形.
-            self.wgpu_renderer.draw_rects(&size_info, &metrics, rects, &mut encoder, &view);
+            self.wgpu_renderer
+                .draw_rects(&size_info, &metrics, rects, &mut encoder, &view);
 
             // 绘制消息文本.
             let fg = config.colors.primary.background;
@@ -992,7 +1056,8 @@ impl Display {
                 );
             }
         } else {
-            self.wgpu_renderer.draw_rects(&size_info, &metrics, rects, &mut encoder, &view);
+            self.wgpu_renderer
+                .draw_rects(&size_info, &metrics, rects, &mut encoder, &view);
         }
 
         self.draw_render_timer(config, &mut encoder, &view);
@@ -1006,7 +1071,9 @@ impl Display {
         self.window.pre_present_notify();
 
         // 提交 GPU 命令并 present.
-        self.wgpu_renderer.queue().submit(std::iter::once(encoder.finish()));
+        self.wgpu_renderer
+            .queue()
+            .submit(std::iter::once(encoder.finish()));
         output.present();
 
         self.request_frame(scheduler);
@@ -1100,8 +1167,14 @@ impl Display {
         self.damage_tracker.next_frame().damage_line(damage);
 
         let colors = &config.colors;
-        let fg = colors.line_indicator.foreground.unwrap_or(colors.primary.background);
-        let bg = colors.line_indicator.background.unwrap_or(colors.primary.foreground);
+        let fg = colors
+            .line_indicator
+            .foreground
+            .unwrap_or(colors.primary.background);
+        let bg = colors
+            .line_indicator
+            .background
+            .unwrap_or(colors.primary.foreground);
 
         if obstructed_column.is_none_or(|obstructed_column| obstructed_column < column) {
             self.wgpu_renderer.draw_string(
@@ -1134,7 +1207,7 @@ impl Display {
             None => {
                 self.window.update_ime_position(point, &self.size_info);
                 return;
-            },
+            }
         };
 
         let num_cols = self.size_info.columns();
@@ -1145,9 +1218,12 @@ impl Display {
                 ShortenDirection::Right,
                 Some(SHORTENER),
             ),
-            _ => {
-                StrShortener::new(&preedit.text, num_cols, ShortenDirection::Left, Some(SHORTENER))
-            },
+            _ => StrShortener::new(
+                &preedit.text,
+                num_cols,
+                ShortenDirection::Left,
+                Some(SHORTENER),
+            ),
         }
         .collect();
 
@@ -1175,7 +1251,11 @@ impl Display {
             self.damage_tracker.next_frame().damage_line(damage);
         }
 
-        let underline = RenderLine { start, end, color: fg };
+        let underline = RenderLine {
+            start,
+            end,
+            color: fg,
+        };
         rects.extend(underline.rects(Flags::UNDERLINE, &metrics, &self.size_info));
 
         let ime_popup_point = match preedit.cursor_end_offset {
@@ -1194,11 +1274,12 @@ impl Display {
                 let cursor = RenderableCursor::new(cursor_point, shape, fg, width);
                 rects.extend(cursor.rects(&self.size_info, config.cursor.thickness()));
                 cursor_point
-            },
+            }
             _ => end,
         };
 
-        self.window.update_ime_position(ime_popup_point, &self.size_info);
+        self.window
+            .update_ime_position(ime_popup_point, &self.size_info);
     }
 
     #[inline(never)]
@@ -1366,8 +1447,16 @@ impl Display {
     fn validate_hint_highlights(&mut self, display_offset: usize) {
         let frame = self.damage_tracker.frame();
         let hints = [
-            (&mut self.highlighted_hint, &mut self.highlighted_hint_age, true),
-            (&mut self.vi_highlighted_hint, &mut self.vi_highlighted_hint_age, false),
+            (
+                &mut self.highlighted_hint,
+                &mut self.highlighted_hint_age,
+                true,
+            ),
+            (
+                &mut self.vi_highlighted_hint,
+                &mut self.vi_highlighted_hint_age,
+                false,
+            ),
         ];
 
         let num_lines = self.size_info.screen_lines();
@@ -1484,17 +1573,23 @@ impl Preedit {
     pub fn new(text: String, cursor_byte_offset: Option<(usize, usize)>) -> Self {
         let cursor_end_offset = if let Some(byte_offset) = cursor_byte_offset {
             // Convert byte offset into char offset.
-            let start_to_end_offset =
-                text[byte_offset.0..].chars().fold(0, |acc, ch| acc + ch.width().unwrap_or(1));
-            let end_to_end_offset =
-                text[byte_offset.1..].chars().fold(0, |acc, ch| acc + ch.width().unwrap_or(1));
+            let start_to_end_offset = text[byte_offset.0..]
+                .chars()
+                .fold(0, |acc, ch| acc + ch.width().unwrap_or(1));
+            let end_to_end_offset = text[byte_offset.1..]
+                .chars()
+                .fold(0, |acc, ch| acc + ch.width().unwrap_or(1));
 
             Some((start_to_end_offset, end_to_end_offset))
         } else {
             None
         };
 
-        Self { text, cursor_byte_offset, cursor_end_offset }
+        Self {
+            text,
+            cursor_byte_offset,
+            cursor_end_offset,
+        }
     }
 }
 
@@ -1526,7 +1621,11 @@ pub struct FrameTimer {
 impl FrameTimer {
     pub fn new() -> Self {
         let now = Instant::now();
-        Self { base: now, last_synced_timestamp: now, refresh_interval: Duration::ZERO }
+        Self {
+            base: now,
+            last_synced_timestamp: now,
+            refresh_interval: Duration::ZERO,
+        }
     }
 
     /// Compute the delay that we should use to achieve the target frame

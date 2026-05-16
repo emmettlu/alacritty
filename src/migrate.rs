@@ -257,13 +257,6 @@ impl Migration<'_> {
             Self::Toml(original_path) => format!("Successfully migrated {original_path:?}"),
         }
     }
-
-    /// Get the file path after migration.
-    fn new_path(&self) -> String {
-        match self {
-            Self::Toml(path) => path.to_string_lossy().into(),
-        }
-    }
 }
 
 #[cfg(test)]

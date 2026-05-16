@@ -8,7 +8,9 @@ use crossfont::{BitmapBuffer, RasterizedGlyph};
 use super::glyph_cache::Glyph;
 
 /// Atlas 纹理大小 (像素).
-pub const ATLAS_SIZE: u32 = 1024;
+///
+/// 初始 atlas 用 512x512 降低启动显存占用, 后续空间不足会自动创建新的 atlas.
+pub const ATLAS_SIZE: u32 = 512;
 
 /// 管理单个纹理 atlas.
 ///
@@ -64,7 +66,11 @@ impl Atlas {
     pub fn new(device: &wgpu::Device, size: u32) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("alacritty_glyph_atlas"),
-            size: wgpu::Extent3d { width: size, height: size, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -137,7 +143,7 @@ impl Atlas {
                     rgba.push(u8::MAX);
                 }
                 (false, Cow::Owned(rgba))
-            },
+            }
             BitmapBuffer::Rgba(buffer) => (true, Cow::Borrowed(buffer.as_slice())),
         };
 
@@ -147,7 +153,11 @@ impl Atlas {
                 wgpu::TexelCopyTextureInfo {
                     texture: &self.texture,
                     mip_level: 0,
-                    origin: wgpu::Origin3d { x: offset_x, y: offset_y, z: 0 },
+                    origin: wgpu::Origin3d {
+                        x: offset_x,
+                        y: offset_y,
+                        z: 0,
+                    },
                     aspect: wgpu::TextureAspect::All,
                 },
                 &rgba_buffer,
@@ -156,7 +166,11 @@ impl Atlas {
                     bytes_per_row: Some(4 * width),
                     rows_per_image: Some(height),
                 },
-                wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
             );
         }
 
@@ -224,7 +238,7 @@ impl Atlas {
             Ok(mut glyph) => {
                 glyph.atlas_index = *current_atlas;
                 glyph
-            },
+            }
             Err(AtlasInsertError::Full) => {
                 *current_atlas += 1;
                 if *current_atlas == atlas.len() {
@@ -232,7 +246,7 @@ impl Atlas {
                     atlas.push(new);
                 }
                 Atlas::load_glyph(device, queue, atlas, current_atlas, rasterized)
-            },
+            }
             Err(AtlasInsertError::GlyphTooLarge) => Glyph {
                 atlas_index: *current_atlas,
                 multicolor: false,
