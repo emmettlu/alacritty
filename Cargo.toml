@@ -13,7 +13,6 @@ clap = { version = "4", features = ["derive", "env"] }
 
 crossfont = "0"
 dirs = "6"
-home = "0"
 log = { version = "0", features = ["serde", "std"] }
 notify = "8"
 parking_lot = "0"

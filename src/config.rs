@@ -37,6 +37,8 @@ use crate::logging::LOG_TARGET_CONFIG;
 /// Maximum number of depth for the configuration file imports.
 pub const IMPORT_RECURSION_LIMIT: usize = 5;
 
+const HOME: &str = if cfg!(windows) { "APPDATA" } else { "HOME" };
+
 /// Result from config loading.
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -285,8 +287,8 @@ pub fn normalize_import(base_config_path: &Path, import_path: impl Into<PathBuf>
     let mut import_path = import_path.into();
 
     // Resolve paths relative to user's home directory.
-    if let (Ok(stripped), Some(home_dir)) = (import_path.strip_prefix("~/"), home::home_dir()) {
-        import_path = home_dir.join(stripped);
+    if let Ok(stripped) = import_path.strip_prefix("~/") {
+        import_path = home_dir().join(stripped);
     }
 
     if import_path.is_relative()
@@ -296,6 +298,14 @@ pub fn normalize_import(base_config_path: &Path, import_path: impl Into<PathBuf>
     }
 
     import_path
+}
+
+#[inline(always)]
+fn home_dir() -> PathBuf {
+    env::var(HOME)
+        .inspect_err(|error| error!(target: LOG_TARGET_CONFIG, "{error}"))
+        .unwrap()
+        .into()
 }
 
 /// Get the location of the first found default config file paths
