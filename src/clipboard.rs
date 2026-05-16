@@ -1,5 +1,7 @@
 use crate::terminal::term::ClipboardType;
 
+use log::{debug, warn};
+
 #[cfg(windows)]
 use std::{iter, mem, ptr, slice};
 
@@ -68,7 +70,7 @@ impl Clipboard {
             }
         }
 
-        #[cfg(not(windows))]
+        #[cfg(unix)]
         {
             let _ = ty;
             String::new()

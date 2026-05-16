@@ -1,10 +1,10 @@
+use std::collections::VecDeque;
+use std::io;
 use std::io::prelude::*;
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, Wake, Waker};
-use std::{io, thread};
+use std::sync::{Arc, Condvar, Mutex};
+use std::task::Wake;
 
-use piper::{Reader, Writer, pipe};
 use polling::os::iocp::{CompletionPacket, PollerIocpExt};
 use polling::{Event, PollMode, Poller};
 
@@ -32,13 +32,125 @@ struct Interest {
     mode: PollMode,
 }
 
+struct PipeState {
+    buffer: VecDeque<u8>,
+    closed: bool,
+}
+
+struct BlockingPipe {
+    state: Mutex<PipeState>,
+    readable: Condvar,
+    writable: Condvar,
+    capacity: usize,
+}
+
+impl BlockingPipe {
+    fn new(capacity: usize) -> Self {
+        Self {
+            state: Mutex::new(PipeState {
+                buffer: VecDeque::with_capacity(capacity),
+                closed: false,
+            }),
+            readable: Condvar::new(),
+            writable: Condvar::new(),
+            capacity,
+        }
+    }
+
+    fn close(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.closed = true;
+        self.readable.notify_all();
+        self.writable.notify_all();
+    }
+
+    fn is_empty(&self) -> bool {
+        self.state.lock().unwrap().buffer.is_empty()
+    }
+
+    fn is_full(&self) -> bool {
+        self.state.lock().unwrap().buffer.len() >= self.capacity
+    }
+
+    fn push_blocking(&self, data: &[u8]) -> bool {
+        let mut written = 0;
+
+        while written < data.len() {
+            let mut state = self.state.lock().unwrap();
+            while state.buffer.len() >= self.capacity && !state.closed {
+                state = self.writable.wait(state).unwrap();
+            }
+
+            if state.closed {
+                return false;
+            }
+
+            let available = self.capacity - state.buffer.len();
+            let end = (written + available).min(data.len());
+            state.buffer.extend(&data[written..end]);
+            written = end;
+
+            self.readable.notify_all();
+        }
+
+        true
+    }
+
+    fn pop_blocking(&self, out: &mut Vec<u8>) -> bool {
+        let mut state = self.state.lock().unwrap();
+        while state.buffer.is_empty() && !state.closed {
+            state = self.readable.wait(state).unwrap();
+        }
+
+        if state.buffer.is_empty() && state.closed {
+            return false;
+        }
+
+        out.extend(state.buffer.drain(..));
+        self.writable.notify_all();
+        true
+    }
+
+    fn try_read(&self, buf: &mut [u8]) -> usize {
+        let mut state = self.state.lock().unwrap();
+        let len = buf.len().min(state.buffer.len());
+
+        for byte in buf.iter_mut().take(len) {
+            *byte = state.buffer.pop_front().unwrap();
+        }
+
+        if len > 0 {
+            self.writable.notify_all();
+        }
+
+        len
+    }
+
+    fn try_write(&self, buf: &[u8]) -> usize {
+        let mut state = self.state.lock().unwrap();
+        if state.closed {
+            return 0;
+        }
+
+        let available = self.capacity.saturating_sub(state.buffer.len());
+        let len = available.min(buf.len());
+        state.buffer.extend(&buf[..len]);
+
+        if len > 0 {
+            self.readable.notify_all();
+        }
+
+        len
+    }
+}
+
 /// Poll a reader in another thread.
 pub struct UnblockedReader<R> {
     /// The event to send about completion.
     interest: Arc<Registration>,
 
     /// The pipe that we are reading from.
-    pipe: Reader,
+    pipe: Arc<BlockingPipe>,
 
     /// Is this the first time registering?
     first_register: bool,
@@ -50,46 +162,37 @@ pub struct UnblockedReader<R> {
 impl<R: Read + Send + 'static> UnblockedReader<R> {
     /// Spawn a new unblocked reader.
     pub fn new(mut source: R, pipe_capacity: usize) -> Self {
-        // Create a new pipe.
-        let (reader, mut writer) = pipe(pipe_capacity);
+        let pipe = Arc::new(BlockingPipe::new(pipe_capacity));
         let interest = Arc::new(Registration {
             interest: Mutex::<Option<Interest>>::new(None),
             end: PipeEnd::Reader,
         });
 
-        // Spawn the reader thread.
+        let thread_pipe = Arc::clone(&pipe);
+        let thread_interest = Arc::clone(&interest);
+
         spawn_named("alacritty-tty-reader-thread", move || {
-            let waker = Waker::from(Arc::new(ThreadWaker(thread::current())));
-            let mut context = Context::from_waker(&waker);
+            let mut buf = vec![0; pipe_capacity.max(1)];
 
             loop {
-                // Read from the reader into the pipe.
-                match writer.poll_fill(&mut context, &mut source) {
-                    Poll::Ready(Ok(0)) => {
-                        // Either the pipe is closed or the reader is at its EOF.
-                        // In any case, we are done.
+                match source.read(&mut buf) {
+                    Ok(0) => {
+                        thread_pipe.close();
+                        thread_interest.wake_by_ref();
                         return;
                     }
-
-                    Poll::Ready(Ok(_)) => {
-                        // Keep reading.
-                        continue;
+                    Ok(n) => {
+                        if !thread_pipe.push_blocking(&buf[..n]) {
+                            return;
+                        }
+                        thread_interest.wake_by_ref();
                     }
-
-                    Poll::Ready(Err(e)) if e.kind() == io::ErrorKind::Interrupted => {
-                        // We were interrupted; continue.
-                        continue;
-                    }
-
-                    Poll::Ready(Err(e)) => {
-                        log::error!("error writing to pipe: {}", e);
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(e) => {
+                        log::error!("error reading from pipe source: {e}");
+                        thread_pipe.close();
+                        thread_interest.wake_by_ref();
                         return;
-                    }
-
-                    Poll::Pending => {
-                        // We are now waiting on the other end to advance. Park the
-                        // thread until they do.
-                        thread::park();
                     }
                 }
             }
@@ -97,7 +200,7 @@ impl<R: Read + Send + 'static> UnblockedReader<R> {
 
         Self {
             interest,
-            pipe: reader,
+            pipe,
             first_register: true,
             _reader: PhantomData,
         }
@@ -127,15 +230,17 @@ impl<R: Read + Send + 'static> UnblockedReader<R> {
 
     /// Try to read from the reader.
     pub fn try_read(&mut self, buf: &mut [u8]) -> usize {
-        let waker = Waker::from(self.interest.clone());
-
-        match self
-            .pipe
-            .poll_drain_bytes(&mut Context::from_waker(&waker), buf)
-        {
-            Poll::Pending => 0,
-            Poll::Ready(n) => n,
+        let len = self.pipe.try_read(buf);
+        if len > 0 {
+            self.interest.wake_by_ref();
         }
+        len
+    }
+}
+
+impl<R> Drop for UnblockedReader<R> {
+    fn drop(&mut self) {
+        self.pipe.close();
     }
 }
 
@@ -151,7 +256,7 @@ pub struct UnblockedWriter<W> {
     interest: Arc<Registration>,
 
     /// The pipe that we are writing to.
-    pipe: Writer,
+    pipe: Arc<BlockingPipe>,
 
     /// We logically own the writer, but we don't actually use it.
     _reader: PhantomData<W>,
@@ -160,54 +265,42 @@ pub struct UnblockedWriter<W> {
 impl<W: Write + Send + 'static> UnblockedWriter<W> {
     /// Spawn a new unblocked writer.
     pub fn new(mut sink: W, pipe_capacity: usize) -> Self {
-        // Create a new pipe.
-        let (mut reader, writer) = pipe(pipe_capacity);
+        let pipe = Arc::new(BlockingPipe::new(pipe_capacity));
         let interest = Arc::new(Registration {
             interest: Mutex::<Option<Interest>>::new(None),
             end: PipeEnd::Writer,
         });
 
-        // Spawn the writer thread.
+        let thread_pipe = Arc::clone(&pipe);
+        let thread_interest = Arc::clone(&interest);
+
         spawn_named("alacritty-tty-writer-thread", move || {
-            let waker = Waker::from(Arc::new(ThreadWaker(thread::current())));
-            let mut context = Context::from_waker(&waker);
+            let mut buf = Vec::with_capacity(pipe_capacity.max(1));
 
             loop {
-                // Write from the pipe into the writer.
-                match reader.poll_drain(&mut context, &mut sink) {
-                    Poll::Ready(Ok(0)) => {
-                        // Either the pipe is closed or the writer is full.
-                        // In any case, we are done.
-                        return;
-                    }
-
-                    Poll::Ready(Ok(_)) => {
-                        // Keep writing.
-                        continue;
-                    }
-
-                    Poll::Ready(Err(e)) if e.kind() == io::ErrorKind::Interrupted => {
-                        // We were interrupted; continue.
-                        continue;
-                    }
-
-                    Poll::Ready(Err(e)) => {
-                        log::error!("error writing to pipe: {}", e);
-                        return;
-                    }
-
-                    Poll::Pending => {
-                        // We are now waiting on the other end to advance. Park the
-                        // thread until they do.
-                        thread::park();
-                    }
+                buf.clear();
+                if !thread_pipe.pop_blocking(&mut buf) {
+                    return;
                 }
+
+                if let Err(e) = sink.write_all(&buf) {
+                    if e.kind() == io::ErrorKind::Interrupted {
+                        continue;
+                    }
+
+                    log::error!("error writing to pipe sink: {e}");
+                    thread_pipe.close();
+                    thread_interest.wake_by_ref();
+                    return;
+                }
+
+                thread_interest.wake_by_ref();
             }
         });
 
         Self {
             interest,
-            pipe: writer,
+            pipe,
             _reader: PhantomData,
         }
     }
@@ -235,15 +328,17 @@ impl<W: Write + Send + 'static> UnblockedWriter<W> {
 
     /// Try to write to the writer.
     pub fn try_write(&mut self, buf: &[u8]) -> usize {
-        let waker = Waker::from(self.interest.clone());
-
-        match self
-            .pipe
-            .poll_fill_bytes(&mut Context::from_waker(&waker), buf)
-        {
-            Poll::Pending => 0,
-            Poll::Ready(n) => n,
+        let len = self.pipe.try_write(buf);
+        if len > 0 {
+            self.interest.wake_by_ref();
         }
+        len
+    }
+}
+
+impl<W> Drop for UnblockedWriter<W> {
+    fn drop(&mut self) {
+        self.pipe.close();
     }
 }
 
@@ -253,20 +348,7 @@ impl<W: Write + Send + 'static> Write for UnblockedWriter<W> {
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        // Nothing to flush.
         Ok(())
-    }
-}
-
-struct ThreadWaker(thread::Thread);
-
-impl Wake for ThreadWaker {
-    fn wake(self: Arc<Self>) {
-        self.0.unpark();
-    }
-
-    fn wake_by_ref(self: &Arc<Self>) {
-        self.0.unpark();
     }
 }
 

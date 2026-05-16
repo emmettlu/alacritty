@@ -8,7 +8,7 @@ use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
 
 use log::{debug, info};
-use parking_lot::MutexGuard;
+use std::sync::MutexGuard;
 use winit::dpi::PhysicalSize;
 use winit::keyboard::ModifiersState;
 use winit::window::CursorIcon;

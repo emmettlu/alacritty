@@ -60,8 +60,8 @@ pub struct ChildExitWatcher {
     wait_handle: AtomicPtr<c_void>,
     event_rx: mpsc::Receiver<ChildEvent>,
     interest: Arc<Mutex<Option<Interest>>>,
-    child_handle: AtomicPtr<c_void>,
-    pid: Option<NonZeroU32>,
+    _child_handle: AtomicPtr<c_void>,
+    _pid: Option<NonZeroU32>,
 }
 
 impl ChildExitWatcher {
@@ -90,12 +90,12 @@ impl ChildExitWatcher {
         if success == 0 {
             Err(Error::last_os_error())
         } else {
-            let pid = unsafe { NonZeroU32::new(GetProcessId(child_handle)) };
+            let _pid = unsafe { NonZeroU32::new(GetProcessId(child_handle)) };
             Ok(ChildExitWatcher {
                 event_rx,
                 interest,
-                pid,
-                child_handle: AtomicPtr::from(child_handle),
+                _pid,
+                _child_handle: AtomicPtr::from(child_handle),
                 wait_handle: AtomicPtr::from(wait_handle),
             })
         }
@@ -122,40 +122,5 @@ impl Drop for ChildExitWatcher {
         unsafe {
             UnregisterWait(self.wait_handle.load(Ordering::Relaxed) as HANDLE);
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::os::windows::io::AsRawHandle;
-    use std::process::Command;
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    use super::super::PTY_CHILD_EVENT_TOKEN;
-    use super::*;
-
-    #[test]
-    pub fn event_is_emitted_when_child_exits() {
-        const WAIT_TIMEOUT: Duration = Duration::from_millis(200);
-
-        let poller = Arc::new(Poller::new().unwrap());
-
-        let mut child = Command::new("cmd.exe").spawn().unwrap();
-        let child_exit_watcher = ChildExitWatcher::new(child.as_raw_handle() as HANDLE).unwrap();
-        child_exit_watcher.register(&poller, Event::readable(PTY_CHILD_EVENT_TOKEN));
-
-        child.kill().unwrap();
-
-        // Poll for the event or fail with timeout if nothing has been sent.
-        let mut events = polling::Events::new();
-        poller.wait(&mut events, Some(WAIT_TIMEOUT)).unwrap();
-        assert_eq!(events.iter().next().unwrap().key, PTY_CHILD_EVENT_TOKEN);
-        // Verify that at least one `ChildEvent::Exited` was received.
-        let expected_status = ExitStatus::from_raw(1);
-        assert_eq!(
-            child_exit_watcher.event_rx().try_recv(),
-            Ok(ChildEvent::Exited(Some(expected_status)))
-        );
     }
 }

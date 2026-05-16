@@ -14,8 +14,6 @@ clap = { version = "4", features = ["derive", "env"] }
 crossfont = "0"
 dirs = "6"
 log = { version = "0", features = ["serde", "std"] }
-notify = "8"
-parking_lot = "0"
 polling = "3"
 pollster = "0"
 regex-automata = "0"
@@ -47,7 +45,6 @@ rustix = { version = "1", default-features = false, features = [
 ] }
 signal-hook = "0"
 wgpu = { version = "29", default-features = false, features = [
-  "parking_lot",
   "std",
   "vulkan",
   "wgsl",
@@ -60,11 +57,8 @@ winit = { version = "0", default-features = false, features = [
 ] }
 
 [target.'cfg(windows)'.dependencies]
-miow = "0"
-piper = "0"
 wgpu = { version = "29", default-features = false, features = [
   "dx12",
-  "parking_lot",
   "std",
   "wgsl",
 ] }
@@ -73,11 +67,14 @@ windows-sys = { version = "0", features = [
   "Win32_Graphics_Dwm",
   "Win32_Graphics_Gdi",
   "Win32_Security",
+  "Win32_Storage_FileSystem",
   "Win32_System_Console",
   "Win32_System_DataExchange",
+  "Win32_System_IO",
   "Win32_System_LibraryLoader",
   "Win32_System_Memory",
   "Win32_System_Ole",
+  "Win32_System_Pipes",
   "Win32_System_Threading",
   "Win32_System_WindowsProgramming",
   "Win32_UI_WindowsAndMessaging",

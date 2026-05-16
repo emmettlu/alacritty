@@ -1,9 +1,10 @@
 use log::{info, warn};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
+use std::fs::File;
 use std::io::{Error, Result};
 use std::os::windows::ffi::OsStrExt;
-use std::os::windows::io::IntoRawHandle;
+use std::os::windows::io::{FromRawHandle, IntoRawHandle};
 use std::{mem, ptr};
 
 use windows_sys::Win32::Foundation::{HANDLE, S_OK};
@@ -11,6 +12,7 @@ use windows_sys::Win32::System::Console::{
     COORD, ClosePseudoConsole, CreatePseudoConsole, HPCON, ResizePseudoConsole,
 };
 use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::core::{HRESULT, PWSTR};
 use windows_sys::{s, w};
 
@@ -107,6 +109,21 @@ impl Drop for Conpty {
 // The ConPTY handle can be sent between threads.
 unsafe impl Send for Conpty {}
 
+fn anonymous_pipe(size: u32) -> Result<(File, File)> {
+    let mut read = ptr::null_mut();
+    let mut write = ptr::null_mut();
+
+    let success = unsafe { CreatePipe(&mut read, &mut write, ptr::null(), size) };
+    if success == 0 {
+        return Err(Error::last_os_error());
+    }
+
+    let read = unsafe { File::from_raw_handle(read.cast()) };
+    let write = unsafe { File::from_raw_handle(write.cast()) };
+
+    Ok((read, write))
+}
+
 pub fn new(config: &Options, window_size: WindowSize) -> Result<Pty> {
     let api = ConptyApi::new();
     let mut pty_handle: HPCON = 0;
@@ -115,8 +132,8 @@ pub fn new(config: &Options, window_size: WindowSize) -> Result<Pty> {
     // size to be used. There may be small performance and memory advantages
     // to be gained by tuning this in the future, but it's likely a reasonable
     // start point.
-    let (conout, conout_pty_handle) = miow::pipe::anonymous(0)?;
-    let (conin_pty_handle, conin) = miow::pipe::anonymous(0)?;
+    let (conout, conout_pty_handle) = anonymous_pipe(0)?;
+    let (conin_pty_handle, conin) = anonymous_pipe(0)?;
 
     // Create the Pseudo Console, using the pipes.
     let result = unsafe {
