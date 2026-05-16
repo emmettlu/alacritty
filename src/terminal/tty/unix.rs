@@ -56,7 +56,7 @@ struct Passwd {
 fn get_pw_entry() -> Result<Passwd> {
     let uid = rustix::process::getuid().as_raw();
     let passwd =
-        std::fs::read_to_string("/etc/passwd").map_err(|err| Error::new(ErrorKind::Other, err))?;
+        std::fs::read_to_string("/etc/passwd").map_err(|err| Error::other(err))?;
 
     for line in passwd.lines() {
         if line.is_empty() || line.starts_with('#') {

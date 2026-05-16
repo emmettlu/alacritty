@@ -283,7 +283,7 @@ impl ApplicationHandler<Event> for Processor {
                 } else {
                     vec![ipc_config.options.clone()]
                 };
-                let mut options = ParsedOptions::from_options(&options_list);
+                let options = ParsedOptions::from_options(&options_list);
 
                 // Override IPC config for each window with matching ID.
                 for (_, window_context) in self
@@ -303,7 +303,7 @@ impl ApplicationHandler<Event> for Processor {
                     if ipc_config.reset {
                         self.global_ipc_options.clear();
                     } else {
-                        self.global_ipc_options.append(&mut options);
+                        self.global_ipc_options.append(&options);
                     }
                 }
             }

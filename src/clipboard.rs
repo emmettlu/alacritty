@@ -1,5 +1,3 @@
-use log::{debug, warn};
-
 use crate::terminal::term::ClipboardType;
 
 #[cfg(windows)]
