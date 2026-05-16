@@ -83,6 +83,3 @@ winit = { version = "0", default-features = false, features = [
   "rwh_06",
   "serde"
 ] }
-
-[target.'cfg(windows)'.build-dependencies]
-embed-resource = "3"

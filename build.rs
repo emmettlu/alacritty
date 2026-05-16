@@ -16,11 +16,44 @@ fn main() {
     #[cfg(windows)]
     {
         copy_dxc_runtime();
-
-        embed_resource::compile("./windows/alacritty.rc", embed_resource::NONE)
-            .manifest_optional()
-            .unwrap();
+        compile_windows_resource();
     }
+}
+
+#[cfg(windows)]
+fn compile_windows_resource() {
+    println!("cargo:rerun-if-changed=windows/alacritty.rc");
+    println!("cargo:rerun-if-changed=windows/alacritty.ico");
+
+    let out_dir = env::var_os("OUT_DIR")
+        .map(PathBuf::from)
+        .expect("OUT_DIR is set by Cargo");
+    let res_path = out_dir.join("alacritty.res");
+
+    for compiler in ["rc.exe", "llvm-rc.exe", "llvm-rc"] {
+        let status = Command::new(compiler)
+            .current_dir("windows")
+            .args(["/nologo", "/fo"])
+            .arg(&res_path)
+            .arg("alacritty.rc")
+            .status();
+
+        match status {
+            Ok(status) if status.success() => {
+                println!("cargo:rustc-link-arg-bin=alacritty={}", res_path.display());
+                return;
+            }
+            Ok(status) => {
+                println!("cargo:warning={compiler} failed with status {status}");
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                println!("cargo:warning=failed to run {compiler}: {err}");
+            }
+        }
+    }
+
+    panic!("failed to compile Windows resources; install rc.exe or llvm-rc");
 }
 
 #[cfg(windows)]
@@ -49,7 +82,11 @@ fn copy_dxc_runtime() {
         let dst = profile_dir.join(dll);
         println!("cargo:rerun-if-changed={}", src.display());
         if let Err(err) = fs::copy(&src, &dst) {
-            println!("cargo:warning=Failed to copy {} to {}: {err}", src.display(), dst.display());
+            println!(
+                "cargo:warning=Failed to copy {} to {}: {err}",
+                src.display(),
+                dst.display()
+            );
         }
     }
 }
