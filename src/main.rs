@@ -7,8 +7,6 @@ use std::path::PathBuf;
 use std::{env, fs};
 
 use log::info;
-#[cfg(windows)]
-use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
 
 use winit::event_loop::EventLoop;
 
@@ -29,7 +27,6 @@ mod ipc;
 mod logging;
 mod message_bar;
 mod migrate;
-mod panic;
 mod renderer;
 mod scheduler;
 mod string;
@@ -40,28 +37,6 @@ use crate::cli::{Options, Subcommands};
 use crate::config::UiConfig;
 use crate::config::monitor::ConfigMonitor;
 use crate::event::{Event, Processor};
-
-fn main() -> Result<(), Box<dyn Error>> {
-    panic::attach_handler();
-
-    // When linked with the windows subsystem windows won't automatically attach
-    // to the console of the parent process, so we do it explicitly. This fails
-    // silently if the parent has no console.
-    #[cfg(windows)]
-    unsafe {
-        AttachConsole(ATTACH_PARENT_PROCESS);
-    }
-
-    // Load command line options.
-    let options = Options::new();
-
-    match options.subcommands {
-        Some(Subcommands::Migrate(options)) => migrate::migrate(options),
-        None => alacritty(options)?,
-    }
-
-    Ok(())
-}
 
 /// Temporary files stored for Alacritty.
 ///
@@ -149,4 +124,13 @@ fn log_config_path(config: &UiConfig) {
     }
 
     info!("{msg}");
+}
+
+fn main() {
+    let options = Options::new();
+
+    match options.subcommands {
+        Some(Subcommands::Migrate(options)) => migrate::migrate(options),
+        None => alacritty(options).unwrap(),
+    }
 }
