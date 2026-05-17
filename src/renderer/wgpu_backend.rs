@@ -33,29 +33,18 @@ const RECT_SHADER: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/wgs
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct TextInstanceData {
     // grid_coords: col, row
-    col: u32,
-    row: u32,
+    grid: [u16; 2],
     // glyph: left, top, width, height
-    glyph_left: i32,
-    glyph_top: i32,
-    glyph_width: i32,
-    glyph_height: i32,
+    glyph: [i16; 4],
     // uv: uv_left, uv_bot, uv_width, uv_height
-    uv_left: f32,
-    uv_bot: f32,
-    uv_width: f32,
-    uv_height: f32,
+    uv: [f32; 4],
     // text_color: r, g, b, cell_flags
-    text_r: u32,
-    text_g: u32,
-    text_b: u32,
-    cell_flags: u32,
+    text_color: [u8; 4],
     // bg_color: r, g, b, a
-    bg_r: u32,
-    bg_g: u32,
-    bg_b: u32,
-    bg_a: u32,
+    bg_color: [u8; 4],
 }
+
+const _: () = assert!(std::mem::size_of::<TextInstanceData>() == 36);
 
 /// 文本 uniform 数据
 #[repr(C)]
@@ -282,32 +271,32 @@ impl WgpuRenderer {
             attributes: &[
                 // grid_coords: col, row
                 wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Uint32x2,
+                    format: wgpu::VertexFormat::Uint16x2,
                     offset: 0,
                     shader_location: 0,
                 },
                 // glyph: left, top, width, height
                 wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Sint32x4,
-                    offset: 8,
+                    format: wgpu::VertexFormat::Sint16x4,
+                    offset: 4,
                     shader_location: 1,
                 },
                 // uv: uv_left, uv_bot, uv_width, uv_height
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x4,
-                    offset: 24,
+                    offset: 12,
                     shader_location: 2,
                 },
                 // text_color: r, g, b, cell_flags
                 wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Uint32x4,
-                    offset: 40,
+                    format: wgpu::VertexFormat::Uint8x4,
+                    offset: 28,
                     shader_location: 3,
                 },
                 // bg_color: r, g, b, a
                 wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Uint32x4,
-                    offset: 56,
+                    format: wgpu::VertexFormat::Unorm8x4,
+                    offset: 32,
                     shader_location: 4,
                 },
             ],
@@ -802,35 +791,34 @@ impl WgpuRenderer {
     }
 
     fn create_instance(cell: &RenderableCell, glyph: &Glyph) -> TextInstanceData {
-        let mut cell_flags: u32 = 0;
+        let mut cell_flags: u8 = 0;
         if glyph.multicolor {
-            cell_flags |= COLORED_FLAG;
+            cell_flags |= COLORED_FLAG as u8;
         }
         if cell.flags.contains(Flags::WIDE_CHAR) {
-            cell_flags |= WIDE_CHAR_FLAG;
+            cell_flags |= WIDE_CHAR_FLAG as u8;
         }
 
+        let bg_alpha = (cell.bg_alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+
         TextInstanceData {
-            col: cell.point.column.0 as u32,
-            row: cell.point.line as u32,
-            glyph_left: glyph.left as i32,
-            glyph_top: glyph.top as i32,
-            glyph_width: glyph.width as i32,
-            glyph_height: glyph.height as i32,
-            uv_left: glyph.uv_left,
-            uv_bot: glyph.uv_bot,
-            uv_width: glyph.uv_width,
-            uv_height: glyph.uv_height,
+            grid: [cell.point.column.0 as u16, cell.point.line as u16],
+            glyph: [glyph.left, glyph.top, glyph.width, glyph.height],
+            uv: [glyph.uv_left, glyph.uv_bot, glyph.uv_width, glyph.uv_height],
             // 将 sRGB 颜色转换为线性空间
-            text_r: srgb_to_linear(cell.fg.r) as u32,
-            text_g: srgb_to_linear(cell.fg.g) as u32,
-            text_b: srgb_to_linear(cell.fg.b) as u32,
-            cell_flags,
+            text_color: [
+                srgb_to_linear(cell.fg.r),
+                srgb_to_linear(cell.fg.g),
+                srgb_to_linear(cell.fg.b),
+                cell_flags,
+            ],
             // 将 sRGB 颜色转换为线性空间
-            bg_r: srgb_to_linear(cell.bg.r) as u32,
-            bg_g: srgb_to_linear(cell.bg.g) as u32,
-            bg_b: srgb_to_linear(cell.bg.b) as u32,
-            bg_a: (cell.bg_alpha * 255.0) as u32,
+            bg_color: [
+                srgb_to_linear(cell.bg.r),
+                srgb_to_linear(cell.bg.g),
+                srgb_to_linear(cell.bg.b),
+                bg_alpha,
+            ],
         }
     }
 

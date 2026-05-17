@@ -25,7 +25,7 @@ struct VertexInput {
     @location(1) glyph: vec4<i32>,
     @location(2) uv: vec4<f32>,
     @location(3) text_color: vec4<u32>,
-    @location(4) bg_color: vec4<u32>,
+    @location(4) bg_color: vec4<f32>,
 }
 
 struct VertexOutput {
@@ -54,12 +54,7 @@ fn fill_colors(input: VertexInput, out: ptr<function, VertexOutput>) {
         f32(input.text_color.z),
     ) / 255.0;
     (*out).cell_flags = input.text_color.w;
-    (*out).bg = vec4<f32>(
-        f32(input.bg_color.x),
-        f32(input.bg_color.y),
-        f32(input.bg_color.z),
-        f32(input.bg_color.w),
-    ) / 255.0;
+    (*out).bg = input.bg_color;
 }
 
 @vertex
