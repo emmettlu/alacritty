@@ -15,7 +15,6 @@ crossfont = "0"
 dirs = "6"
 log = { version = "0", features = ["serde", "std"] }
 polling = "3"
-pollster = "0"
 regex-automata = "0"
 rustc-hash = "2"
 serde = { version = "1", features = ["derive", "rc"] }

@@ -3,8 +3,11 @@
 
 use std::cmp;
 use std::fmt::{self, Formatter};
+use std::future::Future;
 use std::mem;
 use std::num::NonZeroU32;
+use std::pin::Pin;
+use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 use std::time::{Duration, Instant};
 
 use log::{debug, info};
@@ -422,7 +425,7 @@ impl Display {
                 .map_err(|e| Error::Wgpu(format!("create surface: {e}")))?
         };
 
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             // 终端渲染负载很低, 优先集显/低功耗适配器可以避免启动独显带来的显存基线.
             power_preference: wgpu::PowerPreference::LowPower,
             compatible_surface: Some(&wgpu_surface),
@@ -432,7 +435,7 @@ impl Display {
 
         info!("wgpu adapter: {:?}", adapter.get_info());
 
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("alacritty_device"),
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
@@ -1650,6 +1653,34 @@ impl FrameTimer {
             next_frame - now
         }
     }
+}
+
+fn block_on<F>(future: F) -> F::Output
+where
+    F: Future,
+{
+    let waker = noop_waker();
+    let mut context = Context::from_waker(&waker);
+    let mut future = Box::pin(future);
+
+    loop {
+        match Pin::as_mut(&mut future).poll(&mut context) {
+            Poll::Ready(output) => return output,
+            Poll::Pending => std::thread::yield_now(),
+        }
+    }
+}
+
+fn noop_waker() -> Waker {
+    unsafe fn clone(_: *const ()) -> RawWaker {
+        RawWaker::new(std::ptr::null(), &VTABLE)
+    }
+    unsafe fn wake(_: *const ()) {}
+    unsafe fn wake_by_ref(_: *const ()) {}
+    unsafe fn drop(_: *const ()) {}
+
+    static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, drop);
+    unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) }
 }
 
 /// Calculate the cell dimensions based on font metrics.
