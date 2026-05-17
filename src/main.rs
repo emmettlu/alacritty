@@ -26,14 +26,13 @@ mod ipc;
 
 mod logging;
 mod message_bar;
-mod migrate;
 mod renderer;
 mod scheduler;
 mod string;
 mod terminal;
 mod window_context;
 
-use crate::cli::{Options, Subcommands};
+use crate::cli::Options;
 use crate::config::UiConfig;
 use crate::config::monitor::ConfigMonitor;
 use crate::event::{Event, Processor};
@@ -128,9 +127,5 @@ fn log_config_path(config: &UiConfig) {
 
 fn main() {
     let options = Options::new();
-
-    match options.subcommands {
-        Some(Subcommands::Migrate(options)) => migrate::migrate(options),
-        None => alacritty(options).unwrap(),
-    }
+    alacritty(options).unwrap();
 }

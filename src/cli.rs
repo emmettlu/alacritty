@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use crate::config_compat::SerdeReplace;
-use clap::{ArgAction, Args, Parser, Subcommand, ValueHint};
+use clap::{ArgAction, Args, Parser, ValueHint};
 use log::{LevelFilter, error};
 use serde::{Deserialize, Serialize};
 use toml::Value;
@@ -61,10 +61,6 @@ pub struct Options {
     /// Options which can be passed when creating a new window.
     #[clap(flatten)]
     pub window_options: WindowOptions,
-
-    /// Subcommand passed to the CLI.
-    #[clap(subcommand)]
-    pub subcommands: Option<Subcommands>,
 }
 
 impl Options {
@@ -217,36 +213,6 @@ impl WindowIdentity {
             identity.class.clone_from(class);
         }
     }
-}
-
-/// Available CLI subcommands.
-#[derive(Subcommand, Debug)]
-pub enum Subcommands {
-    Migrate(MigrateOptions),
-}
-
-/// Migrate the configuration file.
-#[derive(Args, Clone, Debug)]
-pub struct MigrateOptions {
-    /// Path to the configuration file.
-    #[clap(short, long, value_hint = ValueHint::FilePath)]
-    pub config_file: Option<PathBuf>,
-
-    /// Only output TOML config to STDOUT.
-    #[clap(short, long)]
-    pub dry_run: bool,
-
-    /// Do not recurse over imports.
-    #[clap(short = 'i', long)]
-    pub skip_imports: bool,
-
-    /// Do not move renamed fields to their new location.
-    #[clap(long)]
-    pub skip_renames: bool,
-
-    /// Do not output to STDOUT.
-    #[clap(short, long)]
-    pub silent: bool,
 }
 
 /// Subset of options used when creating a new window in-process.
