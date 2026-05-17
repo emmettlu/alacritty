@@ -916,8 +916,10 @@ impl WgpuRenderer {
             return;
         }
 
-        let half_width = size_info.width() / 2.;
-        let half_height = size_info.height() / 2.;
+        // 矩形和文本必须使用同一套内容区域投影, 否则 hollow cursor 等矩形会随行号
+        // 逐渐偏离文本位置.
+        let half_width = (size_info.width() - 2. * size_info.padding_x()) / 2.;
+        let half_height = (size_info.height() - 2. * size_info.padding_y()) / 2.;
 
         // 按 rect_kind 分类顶点
         let mut vertices_by_kind: [Vec<RectVertex>; 4] = Default::default();
