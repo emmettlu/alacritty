@@ -884,37 +884,31 @@ impl Display {
             let vi_highlighted_hint = &self.vi_highlighted_hint;
             let damage_tracker = &mut self.damage_tracker;
 
-            let cells: Vec<_> = grid_cells
-                .into_iter()
-                .map(|mut cell| {
-                    if has_highlighted_hint {
-                        let point = term::viewport_to_point(display_offset, cell.point);
-                        let hyperlink = cell
-                            .extra
-                            .as_ref()
-                            .and_then(|extra| extra.hyperlink.as_ref());
+            for cell in &mut grid_cells {
+                if has_highlighted_hint {
+                    let point = term::viewport_to_point(display_offset, cell.point);
+                    let hyperlink = cell
+                        .extra
+                        .as_ref()
+                        .and_then(|extra| extra.hyperlink.as_ref());
 
-                        let should_highlight = |hint: &Option<HintMatch>| {
-                            hint.as_ref()
-                                .is_some_and(|hint| hint.should_highlight(point, hyperlink))
-                        };
-                        if should_highlight(highlighted_hint)
-                            || should_highlight(vi_highlighted_hint)
-                        {
-                            damage_tracker.frame().damage_point(cell.point);
-                            cell.flags.insert(Flags::UNDERLINE);
-                        }
+                    let should_highlight = |hint: &Option<HintMatch>| {
+                        hint.as_ref()
+                            .is_some_and(|hint| hint.should_highlight(point, hyperlink))
+                    };
+                    if should_highlight(highlighted_hint) || should_highlight(vi_highlighted_hint) {
+                        damage_tracker.frame().damage_point(cell.point);
+                        cell.flags.insert(Flags::UNDERLINE);
                     }
+                }
 
-                    lines.update(&cell);
-                    cell
-                })
-                .collect();
+                lines.update(cell);
+            }
 
             self.wgpu_renderer.draw_cells(
                 &size_info,
                 &mut self.glyph_cache,
-                cells.into_iter(),
+                grid_cells.into_iter(),
                 &mut encoder,
                 &view,
             );

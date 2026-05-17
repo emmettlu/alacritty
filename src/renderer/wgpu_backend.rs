@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crossfont::{Metrics, RasterizedGlyph};
@@ -103,11 +102,10 @@ struct AtlasBindGroup {
     bind_group: wgpu::BindGroup,
 }
 
-/// 最大批量实例数.
+/// 初始文本实例 buffer 容量.
 ///
-/// 终端一帧通常远小于 8192 个可见 cell, 超出时绘制路径已经支持分批.
-/// 避免启动时为极端场景固定分配 0x1_0000 个实例的 GPU buffer.
-const BATCH_MAX: usize = 8192;
+/// 超出时会按需扩容, 避免启动时为极端场景固定分配 0x1_0000 个实例的 GPU buffer.
+const INITIAL_INSTANCE_CAPACITY: usize = 8192;
 
 /// Rendering glyph flags - 与着色器保持同步
 const COLORED_FLAG: u32 = 1;
@@ -141,9 +139,11 @@ pub struct WgpuRenderer {
     text_bg_uniform_bind_group: wgpu::BindGroup,
     text_fg_uniform_bind_group: wgpu::BindGroup,
     text_instance_buffer: wgpu::Buffer,
+    text_instance_buffer_capacity: usize,
     text_index_buffer: wgpu::Buffer,
     text_texture_bind_group_layout: wgpu::BindGroupLayout,
     text_sampler: wgpu::Sampler,
+    text_instances_by_atlas: Vec<Vec<TextInstanceData>>,
 
     // -- 矩形渲染管线 --
     rect_pipelines: [wgpu::RenderPipeline; 4], // normal, undercurl, dotted, dashed
@@ -415,12 +415,8 @@ impl WgpuRenderer {
         // =============================
         // 文本 instance buffer
         // =============================
-        let text_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("text_instance_buffer"),
-            size: (BATCH_MAX * std::mem::size_of::<TextInstanceData>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let text_instance_buffer =
+            Self::create_text_instance_buffer(&device, INITIAL_INSTANCE_CAPACITY);
 
         // =============================
         // 矩形渲染管线
@@ -550,9 +546,11 @@ impl WgpuRenderer {
             text_bg_uniform_bind_group,
             text_fg_uniform_bind_group,
             text_instance_buffer,
+            text_instance_buffer_capacity: INITIAL_INSTANCE_CAPACITY,
             text_index_buffer,
             text_texture_bind_group_layout,
             text_sampler,
+            text_instances_by_atlas: Vec::new(),
 
             rect_pipelines,
             rect_uniform_buffer,
@@ -588,6 +586,25 @@ impl WgpuRenderer {
         AtlasBindGroup { bind_group }
     }
 
+    fn create_text_instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("text_instance_buffer"),
+            size: (capacity * std::mem::size_of::<TextInstanceData>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
+    fn ensure_text_instance_buffer_capacity(&mut self, required: usize) {
+        if required <= self.text_instance_buffer_capacity {
+            return;
+        }
+
+        let capacity = required.next_power_of_two();
+        self.text_instance_buffer = Self::create_text_instance_buffer(&self.device, capacity);
+        self.text_instance_buffer_capacity = capacity;
+    }
+
     /// 确保 atlas bind groups 与 atlases 数量一致.
     fn sync_atlas_bind_groups(&mut self) {
         while self.atlas_bind_groups.len() < self.atlases.len() {
@@ -611,11 +628,12 @@ impl WgpuRenderer {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
     ) {
-        // 收集所有实例数据, 按 atlas 分组
-        let mut instances_by_atlas: HashMap<usize, Vec<TextInstanceData>> = HashMap::new();
-        instances_by_atlas
-            .entry(self.current_atlas)
-            .or_default()
+        // 收集所有实例数据, 按 atlas 分组. 复用上帧 Vec, 避免每帧重复分配.
+        let mut instances_by_atlas = std::mem::take(&mut self.text_instances_by_atlas);
+        for instances in &mut instances_by_atlas {
+            instances.clear();
+        }
+        Self::ensure_instance_group(&mut instances_by_atlas, self.current_atlas)
             .reserve(size_info.columns() * size_info.screen_lines());
 
         for cell in cells {
@@ -641,82 +659,85 @@ impl WgpuRenderer {
             bytemuck::bytes_of(&uniforms_fg),
         );
 
-        for (atlas_idx, instances) in &instances_by_atlas {
+        let total_instances = instances_by_atlas.iter().map(Vec::len).sum::<usize>();
+        self.ensure_text_instance_buffer_capacity(total_instances);
+
+        let mut instance_offset = 0usize;
+        for (atlas_idx, instances) in instances_by_atlas.iter().enumerate() {
             if instances.is_empty() {
                 continue;
             }
 
-            // 如果实例数超出 buffer 大小, 需要分批
-            for chunk in instances.chunks(BATCH_MAX) {
-                self.queue
-                    .write_buffer(&self.text_instance_buffer, 0, bytemuck::cast_slice(chunk));
+            let buffer_offset =
+                (instance_offset * std::mem::size_of::<TextInstanceData>()) as wgpu::BufferAddress;
+            self.queue.write_buffer(
+                &self.text_instance_buffer,
+                buffer_offset,
+                bytemuck::cast_slice(instances),
+            );
+            instance_offset += instances.len();
 
-                let bind_group = &self.atlas_bind_groups[*atlas_idx];
-                {
-                    let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("text_bg_pass"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view,
-                            depth_slice: None,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Load,
-                                store: wgpu::StoreOp::Store,
-                            },
-                        })],
-                        depth_stencil_attachment: None,
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                        multiview_mask: None,
-                    });
-                    rpass.set_pipeline(&self.text_bg_pipeline);
-                    rpass.set_bind_group(0, &self.text_bg_uniform_bind_group, &[]);
-                    rpass.set_bind_group(1, &bind_group.bind_group, &[]);
-                    rpass.set_index_buffer(
-                        self.text_index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
-                    rpass.set_vertex_buffer(0, self.text_instance_buffer.slice(..));
-                    rpass.draw_indexed(0..6, 0, 0..chunk.len() as u32);
-                }
+            let bind_group = &self.atlas_bind_groups[atlas_idx];
+            {
+                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("text_bg_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                rpass.set_pipeline(&self.text_bg_pipeline);
+                rpass.set_bind_group(0, &self.text_bg_uniform_bind_group, &[]);
+                rpass.set_bind_group(1, &bind_group.bind_group, &[]);
+                rpass.set_index_buffer(self.text_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                rpass.set_vertex_buffer(0, self.text_instance_buffer.slice(buffer_offset..));
+                rpass.draw_indexed(0..6, 0, 0..instances.len() as u32);
+            }
 
-                // 文字 pass
-                {
-                    let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("text_fg_pass"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view,
-                            depth_slice: None,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Load,
-                                store: wgpu::StoreOp::Store,
-                            },
-                        })],
-                        depth_stencil_attachment: None,
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                        multiview_mask: None,
-                    });
-                    rpass.set_pipeline(&self.text_fg_pipeline);
-                    rpass.set_bind_group(0, &self.text_fg_uniform_bind_group, &[]);
-                    rpass.set_bind_group(1, &bind_group.bind_group, &[]);
-                    rpass.set_index_buffer(
-                        self.text_index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
-                    rpass.set_vertex_buffer(0, self.text_instance_buffer.slice(..));
-                    rpass.draw_indexed(0..6, 0, 0..chunk.len() as u32);
-                }
+            // 文字 pass
+            {
+                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("text_fg_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                rpass.set_pipeline(&self.text_fg_pipeline);
+                rpass.set_bind_group(0, &self.text_fg_uniform_bind_group, &[]);
+                rpass.set_bind_group(1, &bind_group.bind_group, &[]);
+                rpass.set_index_buffer(self.text_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                rpass.set_vertex_buffer(0, self.text_instance_buffer.slice(buffer_offset..));
+                rpass.draw_indexed(0..6, 0, 0..instances.len() as u32);
             }
         }
+
+        self.text_instances_by_atlas = instances_by_atlas;
     }
 
     fn process_cell(
         &mut self,
         mut cell: RenderableCell,
         glyph_cache: &mut GlyphCache,
-        instances_by_atlas: &mut HashMap<usize, Vec<TextInstanceData>>,
+        instances_by_atlas: &mut Vec<Vec<TextInstanceData>>,
     ) {
         // 获取 cell 的字体 key
         let font_key = match cell.flags & Flags::BOLD_ITALIC {
@@ -747,10 +768,7 @@ impl WgpuRenderer {
         };
         let glyph = glyph_cache.get(glyph_key, &mut loader, true);
         let instance = Self::create_instance(&cell, &glyph);
-        instances_by_atlas
-            .entry(glyph.atlas_index)
-            .or_default()
-            .push(instance);
+        Self::ensure_instance_group(instances_by_atlas, glyph.atlas_index).push(instance);
 
         // 渲染可见的零宽字符
         if let Some(zerowidth) = cell
@@ -766,12 +784,20 @@ impl WgpuRenderer {
                 };
                 let glyph = glyph_cache.get(glyph_key, &mut loader, false);
                 let instance = Self::create_instance(&cell, &glyph);
-                instances_by_atlas
-                    .entry(glyph.atlas_index)
-                    .or_default()
-                    .push(instance);
+                Self::ensure_instance_group(instances_by_atlas, glyph.atlas_index).push(instance);
             }
         }
+    }
+
+    fn ensure_instance_group(
+        instances_by_atlas: &mut Vec<Vec<TextInstanceData>>,
+        atlas_index: usize,
+    ) -> &mut Vec<TextInstanceData> {
+        if instances_by_atlas.len() <= atlas_index {
+            instances_by_atlas.resize_with(atlas_index + 1, Vec::new);
+        }
+
+        &mut instances_by_atlas[atlas_index]
     }
 
     fn create_instance(cell: &RenderableCell, glyph: &Glyph) -> TextInstanceData {
