@@ -24,8 +24,9 @@ pub use glyph_cache::{Glyph, GlyphCache, LoadGlyph};
 use atlas::{ATLAS_SIZE, Atlas};
 
 // 着色器源码
-const TEXT_SHADER: &str = include_str!("../../res/wgpu/text.wgsl");
-const RECT_SHADER: &str = include_str!("../../res/wgpu/rect.wgsl");
+
+const TEXT_SHADER: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/wgsl/text.wgsl"));
+const RECT_SHADER: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/wgsl/rect.wgsl"));
 
 /// 文本实例数据, 与 WGSL 中的 VertexInput 对应.
 #[repr(C)]
@@ -318,7 +319,7 @@ impl WgpuRenderer {
             layout: Some(&text_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &text_shader,
-                entry_point: Some("vs_main"),
+                entry_point: Some("vs_bg"),
                 buffers: std::slice::from_ref(&text_instance_layout),
                 compilation_options: Default::default(),
             },
@@ -362,7 +363,7 @@ impl WgpuRenderer {
             layout: Some(&text_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &text_shader,
-                entry_point: Some("vs_main"),
+                entry_point: Some("vs_text"),
                 buffers: &[text_instance_layout],
                 compilation_options: Default::default(),
             },

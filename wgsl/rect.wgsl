@@ -97,8 +97,11 @@ fn fs_dotted(input: VertexOutput) -> @location(0) vec4<f32> {
         let left_center = (dot_number - (dot_number % 2.0)) * uniforms.underline_thickness + radius;
         let right_center = left_center + 2.0 * uniforms.underline_thickness;
 
-        let distance_left = sqrt(pow(x - left_center, 2.0) + pow(y - center_y, 2.0));
-        let distance_right = sqrt(pow(x - right_center, 2.0) + pow(y - center_y, 2.0));
+        let dx_left = x - left_center;
+        let dx_right = x - right_center;
+        let dy = y - center_y;
+        let distance_left = sqrt(dx_left * dx_left + dy * dy);
+        let distance_right = sqrt(dx_right * dx_right + dy * dy);
 
         let alpha = max(1.0 - (min(distance_left, distance_right) - radius), 0.0);
         return vec4<f32>(input.color.rgb, alpha);
