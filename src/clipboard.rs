@@ -266,6 +266,7 @@ impl X11State {
         Ok(buf)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn process_event(
         &self,
         buff: &mut Vec<u8>,
@@ -274,16 +275,17 @@ impl X11State {
         property: Atom,
         timeout: Option<Duration>,
         _use_xfixes: bool,
-        sequence_number: u64,
+        _sequence_number: u64,
     ) -> Result<(), String> {
+        let _ = (_use_xfixes, _sequence_number);
         let mut is_incr = false;
         let start_time = timeout.map(|_| Instant::now());
 
         loop {
-            if let (Some(t), Some(st)) = (timeout, start_time) {
-                if st.elapsed() >= t {
-                    return Err("timeout".to_string());
-                }
+            if let (Some(t), Some(st)) = (timeout, start_time)
+                && st.elapsed() >= t
+            {
+                return Err("timeout".to_string());
             }
 
             let event = match self.getter.connection.poll_for_event() {
@@ -320,10 +322,10 @@ impl X11State {
                         .map_err(|e| e.to_string())?;
 
                     if reply.type_ == self.getter.atoms.incr {
-                        if let Some(mut it) = reply.value32() {
-                            if let Some(sz) = it.next() {
-                                buff.reserve(sz as usize);
-                            }
+                        if let Some(mut it) = reply.value32()
+                            && let Some(sz) = it.next()
+                        {
+                            buff.reserve(sz as usize);
                         }
                         self.getter
                             .connection
@@ -541,6 +543,7 @@ pub struct Clipboard {
     #[cfg(all(unix, not(target_os = "macos")))]
     wayland: Option<WaylandClipboard>,
     #[cfg(all(unix, not(target_os = "macos")))]
+    #[allow(dead_code)]
     wayland_display: Option<*mut c_void>,
     #[cfg(all(unix, not(target_os = "macos")))]
     x11: Option<X11State>,
@@ -666,17 +669,16 @@ impl Clipboard {
                     if let Ok(s) = w.load_primary() {
                         return s;
                     }
-                } else if let Some(ref x) = self.x11 {
-                    if let Ok(v) = x.load(
+                } else if let Some(ref x) = self.x11
+                    && let Ok(v) = x.load(
                         x.getter.atoms.primary,
                         x.getter.atoms.utf8_string,
                         x.getter.atoms.property,
                         Duration::from_secs(3),
-                    ) {
-                        if let Ok(s) = String::from_utf8(v) {
-                            return s;
-                        }
-                    }
+                    )
+                    && let Ok(s) = String::from_utf8(v)
+                {
+                    return s;
                 }
                 return String::new();
             }
@@ -684,17 +686,16 @@ impl Clipboard {
                 if let Ok(s) = w.load() {
                     return s;
                 }
-            } else if let Some(ref x) = self.x11 {
-                if let Ok(v) = x.load(
+            } else if let Some(ref x) = self.x11
+                && let Ok(v) = x.load(
                     x.getter.atoms.clipboard,
                     x.getter.atoms.utf8_string,
                     x.getter.atoms.property,
                     Duration::from_secs(3),
-                ) {
-                    if let Ok(s) = String::from_utf8(v) {
-                        return s;
-                    }
-                }
+                )
+                && let Ok(s) = String::from_utf8(v)
+            {
+                return s;
             }
             String::new()
         }
