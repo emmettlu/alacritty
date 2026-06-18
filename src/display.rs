@@ -452,20 +452,27 @@ impl Display {
         let surface_format = caps.formats[0];
         info!("wgpu surface format: {:?}", surface_format);
 
-        let alpha_mode = if config.window_opacity() < 1.0
-            && caps
+        let alpha_mode = if config.window_opacity() < 1.0 {
+            if caps
                 .alpha_modes
                 .contains(&wgpu::CompositeAlphaMode::PreMultiplied)
-        {
-            wgpu::CompositeAlphaMode::PreMultiplied
-        } else if config.window_opacity() < 1.0
-            && caps
+            {
+                wgpu::CompositeAlphaMode::PreMultiplied
+            } else if caps
                 .alpha_modes
                 .contains(&wgpu::CompositeAlphaMode::PostMultiplied)
+            {
+                wgpu::CompositeAlphaMode::PostMultiplied
+            } else {
+                caps.alpha_modes[0]
+            }
+        } else if caps
+            .alpha_modes
+            .contains(&wgpu::CompositeAlphaMode::Opaque)
         {
-            wgpu::CompositeAlphaMode::PostMultiplied
-        } else {
             wgpu::CompositeAlphaMode::Opaque
+        } else {
+            caps.alpha_modes[0]
         };
         info!("wgpu alpha mode: {:?}", alpha_mode);
 
