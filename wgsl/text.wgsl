@@ -6,9 +6,6 @@ struct Uniforms {
     projection: vec4<f32>,
     // cell_dim: cell_width, cell_height
     cell_dim: vec2<f32>,
-    // 保留 padding, 让 Rust 侧 uniform 结构不需要变化.
-    rendering_pass: i32,
-    _pad: i32,
 }
 
 @group(0) @binding(0)
@@ -127,5 +124,5 @@ fn fs_text(input: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
-    return vec4<f32>(input.fg * alpha, alpha);
+    return vec4<f32>(input.fg, alpha);
 }

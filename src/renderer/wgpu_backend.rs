@@ -54,9 +54,7 @@ struct TextUniforms {
     projection: [f32; 4],
     // cell_dim: cell_width, cell_height
     cell_dim: [f32; 2],
-    // rendering_pass: 0 = background, 1 = text
-    rendering_pass: i32,
-    _pad: i32,
+    _pad: [f32; 2],
 }
 
 /// 矩形顶点数据
@@ -84,7 +82,7 @@ struct RectUniforms {
     underline_position: f32,
     underline_thickness: f32,
     undercurl_position: f32,
-    rect_kind: i32,
+    _pad: f32,
 }
 
 /// 每个 atlas 对应的 bind group
@@ -631,8 +629,7 @@ impl WgpuRenderer {
         }
 
         // 更新 projection uniform
-        let uniforms_bg = self.compute_text_uniforms(size_info, 0);
-        let uniforms_fg = self.compute_text_uniforms(size_info, 1);
+        let uniforms = self.compute_text_uniforms(size_info);
 
         // 确保 bind groups 同步
         self.sync_atlas_bind_groups();
@@ -641,12 +638,12 @@ impl WgpuRenderer {
         self.queue.write_buffer(
             &self.text_bg_uniform_buffer,
             0,
-            bytemuck::bytes_of(&uniforms_bg),
+            bytemuck::bytes_of(&uniforms),
         );
         self.queue.write_buffer(
             &self.text_fg_uniform_buffer,
             0,
-            bytemuck::bytes_of(&uniforms_fg),
+            bytemuck::bytes_of(&uniforms),
         );
 
         let total_instances = instances_by_atlas.iter().map(Vec::len).sum::<usize>();
@@ -822,7 +819,7 @@ impl WgpuRenderer {
         }
     }
 
-    fn compute_text_uniforms(&self, size: &SizeInfo, rendering_pass: i32) -> TextUniforms {
+    fn compute_text_uniforms(&self, size: &SizeInfo) -> TextUniforms {
         let width = size.width();
         let height = size.height();
         let padding_x = size.padding_x();
@@ -836,8 +833,7 @@ impl WgpuRenderer {
         TextUniforms {
             projection: [offset_x, offset_y, scale_x, scale_y],
             cell_dim: [size.cell_width(), size.cell_height()],
-            rendering_pass,
-            _pad: 0,
+            _pad: [0.0; 2],
         }
     }
 
@@ -936,7 +932,7 @@ impl WgpuRenderer {
         let half_width = (size_info.width() - 2. * size_info.padding_x()) / 2.;
         let half_height = (size_info.height() - 2. * size_info.padding_y()) / 2.;
 
-        // 按 rect_kind 分类顶点
+        // 按矩形类型分类顶点
         let mut vertices_by_kind: [Vec<RectVertex>; 4] = Default::default();
         let estimated_vertices_per_kind = rects.len().saturating_mul(6) / vertices_by_kind.len();
         for vertices in &mut vertices_by_kind {
@@ -976,7 +972,7 @@ impl WgpuRenderer {
                 underline_position,
                 underline_thickness: metrics.underline_thickness,
                 undercurl_position: position,
-                rect_kind: kind_idx as i32,
+                _pad: 0.0,
             };
 
             self.queue.write_buffer(

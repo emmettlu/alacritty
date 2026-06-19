@@ -10,8 +10,6 @@ struct RectUniforms {
     underline_position: f32,
     underline_thickness: f32,
     undercurl_position: f32,
-    // 0 = normal, 1 = undercurl, 2 = dotted, 3 = dashed
-    rect_kind: i32,
 }
 
 @group(0) @binding(0)
