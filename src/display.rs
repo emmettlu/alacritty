@@ -466,10 +466,7 @@ impl Display {
             } else {
                 caps.alpha_modes[0]
             }
-        } else if caps
-            .alpha_modes
-            .contains(&wgpu::CompositeAlphaMode::Opaque)
-        {
+        } else if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::Opaque) {
             wgpu::CompositeAlphaMode::Opaque
         } else {
             caps.alpha_modes[0]

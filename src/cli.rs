@@ -26,10 +26,12 @@ pub struct Options {
     pub print_events: bool,
 
     /// Generates ref test.
-    #[clap(long, conflicts_with("daemon"))]
+    #[cfg_attr(unix, clap(long, conflicts_with("daemon")))]
+    #[cfg_attr(not(unix), clap(long))]
     pub ref_test: bool,
 
     /// Window ID to embed Alacritty within (decimal or hexadecimal with "0x" prefix).
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[clap(long)]
     pub embed: Option<String>,
 
@@ -46,6 +48,7 @@ pub struct Options {
     verbose: u8,
 
     /// Do not spawn an initial window.
+    #[cfg(unix)]
     #[clap(long)]
     pub daemon: bool,
 
@@ -72,10 +75,14 @@ impl Options {
 
     /// Override configuration file with options from the CLI.
     pub fn override_config(&mut self, config: &mut UiConfig) {
-        config.window.embed = self
-            .embed
-            .as_ref()
-            .and_then(|embed| parse_hex_or_decimal(embed));
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            config.window.embed = self
+                .embed
+                .as_ref()
+                .and_then(|embed| parse_hex_or_decimal(embed));
+        }
+
         config.debug.print_events |= self.print_events;
         config.debug.log_level = max(config.debug.log_level, self.log_level());
         config.debug.ref_test |= self.ref_test;
@@ -85,6 +92,18 @@ impl Options {
         }
 
         self.config_options.override_config(config);
+    }
+
+    pub fn daemon(&self) -> bool {
+        #[cfg(unix)]
+        {
+            self.daemon
+        }
+
+        #[cfg(not(unix))]
+        {
+            false
+        }
     }
 
     /// Logging filter level.
@@ -122,6 +141,7 @@ fn parse_class(input: &str) -> Result<Class, String> {
 }
 
 /// Convert to hex if possible, else decimal.
+#[cfg(all(unix, not(target_os = "macos")))]
 fn parse_hex_or_decimal(input: &str) -> Option<u32> {
     input
         .strip_prefix("0x")
@@ -457,18 +477,21 @@ mod tests {
         assert!(class.is_err());
     }
 
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn valid_decimal() {
         let value = parse_hex_or_decimal("10485773");
         assert_eq!(value, Some(10485773));
     }
 
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn valid_hex_to_decimal() {
         let value = parse_hex_or_decimal("0xa0000d");
         assert_eq!(value, Some(10485773));
     }
 
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn invalid_hex_to_decimal() {
         let value = parse_hex_or_decimal("0xa0xx0d");

@@ -39,8 +39,6 @@ use crate::terminal::vte::ansi::NamedColor;
 
 #[cfg(unix)]
 use crate::cli::{IpcConfig, ParsedOptions};
-#[cfg(unix)]
-use crate::ipc::{IpcListener, SocketMessage};
 use crate::cli::{Options as CliOptions, WindowOptions};
 use crate::clipboard::Clipboard;
 use crate::config::UiConfig;
@@ -53,6 +51,8 @@ use crate::display::{Display, Preedit, SizeInfo};
 use crate::input::{self, ActionContext as _, FONT_SIZE_STEP};
 #[cfg(unix)]
 use crate::ipc::{self, SocketReply};
+#[cfg(unix)]
+use crate::ipc::{IpcListener, SocketMessage};
 use crate::logging::LOG_TARGET_WINIT;
 use crate::message_bar::{Message, MessageBuffer};
 use crate::scheduler::{Scheduler, TimerId, Topic};
@@ -207,7 +207,7 @@ impl ApplicationHandler<Event> for Processor {
     fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
 
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
-        if cause != StartCause::Init || self.cli_options.daemon {
+        if cause != StartCause::Init || self.cli_options.daemon() {
             return;
         }
 
@@ -226,10 +226,10 @@ impl ApplicationHandler<Event> for Processor {
             match IpcListener::new(&path) {
                 Ok(listener) => {
                     self.ipc_listener = Some(listener);
-                },
+                }
                 Err(err) => {
                     log::warn!("Failed to create IPC socket at {}: {}", path.display(), err);
-                },
+                }
             }
         }
 
@@ -390,7 +390,7 @@ impl ApplicationHandler<Event> for Processor {
                 self.scheduler.unschedule_window(window_context.id());
 
                 // Shutdown if no more terminals are open.
-                if self.windows.is_empty() && !self.cli_options.daemon {
+                if self.windows.is_empty() && !self.cli_options.daemon() {
                     // Write ref tests of last window to disk.
                     if self.config.debug.ref_test {
                         window_context.write_ref_test_results();
@@ -446,16 +446,23 @@ impl ApplicationHandler<Event> for Processor {
             while let Some((msg, maybe_stream)) = listener.try_recv() {
                 match msg {
                     SocketMessage::CreateWindow(options) => {
-                        let _ = self.proxy.send_event(Event::new(EventType::CreateWindow(options), None));
-                    },
+                        let _ = self
+                            .proxy
+                            .send_event(Event::new(EventType::CreateWindow(options), None));
+                    }
                     SocketMessage::Config(cfg) => {
-                        let _ = self.proxy.send_event(Event::new(EventType::IpcConfig(cfg), None));
-                    },
+                        let _ = self
+                            .proxy
+                            .send_event(Event::new(EventType::IpcConfig(cfg), None));
+                    }
                     SocketMessage::GetConfig(_get) => {
                         if let Some(stream) = maybe_stream {
-                            let _ = self.proxy.send_event(Event::new(EventType::IpcGetConfig(std::sync::Arc::new(stream)), None));
+                            let _ = self.proxy.send_event(Event::new(
+                                EventType::IpcGetConfig(std::sync::Arc::new(stream)),
+                                None,
+                            ));
                         }
-                    },
+                    }
                 }
             }
         }

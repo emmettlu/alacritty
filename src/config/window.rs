@@ -27,6 +27,7 @@ pub struct WindowConfig {
     pub startup_mode: StartupMode,
 
     /// XEmbed parent.
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[serde(skip)]
     pub embed: Option<u32>,
 
@@ -70,6 +71,7 @@ impl Default for WindowConfig {
         Self {
             dynamic_title: true,
             blur: Default::default(),
+            #[cfg(all(unix, not(target_os = "macos")))]
             embed: Default::default(),
             padding: Default::default(),
             opacity: Default::default(),

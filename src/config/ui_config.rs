@@ -113,6 +113,7 @@ pub struct UiConfig {
     working_directory: Option<PathBuf>,
 
     /// Offer IPC through a unix socket.
+    #[cfg(unix)]
     #[serde(skip)]
     pub ipc_socket: Option<bool>,
 }
@@ -228,6 +229,7 @@ impl UiConfig {
         &self.mouse.bindings.0
     }
 
+    #[cfg(unix)]
     #[inline]
     pub fn ipc_socket(&self) -> bool {
         self.ipc_socket.unwrap_or(self.general.ipc_socket)

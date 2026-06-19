@@ -46,7 +46,9 @@ use x11rb::wrapper::ConnectionExt as _;
 #[cfg(all(unix, not(target_os = "macos")))]
 use x11rb::{COPY_DEPTH_FROM_PARENT, CURRENT_TIME};
 
+#[cfg(all(unix, not(target_os = "macos")))]
 const INCR_CHUNK_SIZE: usize = 4000;
+#[cfg(all(unix, not(target_os = "macos")))]
 const POLL_DURATION_MS: u64 = 50;
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -652,13 +654,14 @@ impl Clipboard {
         #[cfg(windows)]
         {
             if ty == ClipboardType::Selection {
-                return String::new();
-            }
-            match windows_get_clipboard() {
-                Ok(t) => return t,
-                Err(e) => {
-                    log::debug!("Unable to load text from clipboard: {e}");
-                    return String::new();
+                String::new()
+            } else {
+                match windows_get_clipboard() {
+                    Ok(t) => t,
+                    Err(e) => {
+                        log::debug!("Unable to load text from clipboard: {e}");
+                        String::new()
+                    }
                 }
             }
         }
@@ -699,7 +702,7 @@ impl Clipboard {
             }
             String::new()
         }
-        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        #[cfg(not(any(windows, all(unix, not(target_os = "macos")))))]
         {
             let _ = ty;
             String::new()

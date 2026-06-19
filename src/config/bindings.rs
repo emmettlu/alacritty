@@ -128,9 +128,11 @@ pub enum Action {
     Copy,
 
     /// Store current selection into selection buffer.
+    #[cfg(not(any(target_os = "macos", windows)))]
     CopySelection,
 
     /// Paste contents of selection buffer.
+    #[cfg(not(any(target_os = "macos", windows)))]
     PasteSelection,
 
     /// Increase font size.
@@ -442,12 +444,22 @@ macro_rules! trigger {
     (MouseBinding, MouseEvent::$event:ident,) => {{ MouseEvent::$event }};
 }
 
+#[cfg(not(any(target_os = "macos", windows)))]
 pub fn default_mouse_bindings() -> Vec<MouseBinding> {
     bindings!(
         MouseBinding;
         MouseButton::Right;                            MouseAction::ExpandSelection;
         MouseButton::Right,   ModifiersState::CONTROL; MouseAction::ExpandSelection;
         MouseButton::Middle, ~BindingMode::VI;         Action::PasteSelection;
+    )
+}
+
+#[cfg(any(target_os = "macos", windows))]
+pub fn default_mouse_bindings() -> Vec<MouseBinding> {
+    bindings!(
+        MouseBinding;
+        MouseButton::Right;                            MouseAction::ExpandSelection;
+        MouseButton::Right,   ModifiersState::CONTROL; MouseAction::ExpandSelection;
     )
 }
 
@@ -575,7 +587,6 @@ fn common_keybindings() -> Vec<KeyBinding> {
         "v",    ModifiersState::CONTROL | ModifiersState::SHIFT, +BindingMode::VI, +BindingMode::SEARCH; Action::Paste;
         "f",    ModifiersState::CONTROL | ModifiersState::SHIFT, ~BindingMode::SEARCH;                   Action::SearchForward;
         "b",    ModifiersState::CONTROL | ModifiersState::SHIFT, ~BindingMode::SEARCH;                   Action::SearchBackward;
-        Insert, ModifiersState::SHIFT,                           ~BindingMode::VI;                       Action::PasteSelection;
         "c",    ModifiersState::CONTROL | ModifiersState::SHIFT;                                         Action::Copy;
         "c",    ModifiersState::CONTROL | ModifiersState::SHIFT, +BindingMode::VI, ~BindingMode::SEARCH; Action::ClearSelection;
         "0",    ModifiersState::CONTROL;                                                                 Action::ResetFontSize;
@@ -589,7 +600,12 @@ fn common_keybindings() -> Vec<KeyBinding> {
 
 #[cfg(not(any(target_os = "macos", target_os = "windows", test)))]
 pub fn platform_key_bindings() -> Vec<KeyBinding> {
-    common_keybindings()
+    let mut bindings = common_keybindings();
+    bindings.extend(bindings!(
+        KeyBinding;
+        Insert, ModifiersState::SHIFT, ~BindingMode::VI; Action::PasteSelection;
+    ));
+    bindings
 }
 
 #[cfg(all(target_os = "windows", not(test)))]
@@ -597,6 +613,7 @@ pub fn platform_key_bindings() -> Vec<KeyBinding> {
     let mut bindings = bindings!(
         KeyBinding;
         Enter, ModifiersState::ALT; Action::ToggleFullscreen;
+        Insert, ModifiersState::SHIFT, ~BindingMode::VI; Action::Paste;
     );
     bindings.extend(common_keybindings());
     bindings

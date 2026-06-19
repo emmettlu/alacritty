@@ -75,7 +75,11 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         }
 
         // Mask `Alt` modifier from input when we won't send esc.
-        let mods = if self.alt_send_esc(&key, text) { mods } else { mods & !ModifiersState::ALT };
+        let mods = if self.alt_send_esc(&key, text) {
+            mods
+        } else {
+            mods & !ModifiersState::ALT
+        };
 
         let build_key_sequence = Self::should_build_sequence(&key, text, mode, mods);
         let is_modifier_key = Self::is_modifier_key(&key);
@@ -125,7 +129,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
                     // Treat `Alt` as modifier for named keys without text, like ArrowUp.
                     self.ctx.modifiers().state().alt_key()
                 }
-            },
+            }
             _ => alt_send_esc && text.chars().count() == 1,
         }
     }
@@ -208,8 +212,9 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         let mut binding_action = |binding: &KeyBinding| {
             let key = match (&binding.trigger, &logical_key) {
                 (BindingKey::Scancode(_), _) => BindingKey::Scancode(key.physical_key),
-                (_, code) => {
-                    BindingKey::Keycode { key: code.clone(), location: key.location.into() }
+                (_, code) => BindingKey::Keycode {
+                    key: code.clone(),
+                    location: key.location.into(),
                 },
             };
 
@@ -260,7 +265,11 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
 
         // Mask `Alt` modifier from input when we won't send esc.
         let text = key.text_with_all_modifiers().unwrap_or_default();
-        let mods = if self.alt_send_esc(&key, text) { mods } else { mods & !ModifiersState::ALT };
+        let mods = if self.alt_send_esc(&key, text) {
+            mods
+        } else {
+            mods & !ModifiersState::ALT
+        };
 
         let bytes = match key.logical_key.as_ref() {
             Key::Named(NamedKey::Enter)
@@ -269,7 +278,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
                 if !mode.contains(TermMode::REPORT_ALL_KEYS_AS_ESC) =>
             {
                 return;
-            },
+            }
             _ => build_sequence(key, mods, mode),
         };
 
@@ -306,8 +315,13 @@ fn build_sequence(key: KeyEvent, mods: ModifiersState, mode: TermMode) -> Vec<u8
     let kitty_event_type = mode.contains(TermMode::REPORT_EVENT_TYPES)
         && (key.repeat || key.state == ElementState::Released);
 
-    let context =
-        SequenceBuilder { mode, modifiers, kitty_seq, kitty_encode_all, kitty_event_type };
+    let context = SequenceBuilder {
+        mode,
+        modifiers,
+        kitty_seq,
+        kitty_encode_all,
+        kitty_event_type,
+    };
 
     let associated_text = key.text_with_all_modifiers().filter(|text| {
         mode.contains(TermMode::REPORT_ASSOCIATED_TEXT)
@@ -324,7 +338,10 @@ fn build_sequence(key: KeyEvent, mods: ModifiersState, mode: TermMode) -> Vec<u8
         .or_else(|| context.try_build_textual(&key, associated_text));
 
     let (payload, terminator) = match sequence_base {
-        Some(SequenceBase { payload, terminator }) => (payload, terminator),
+        Some(SequenceBase {
+            payload,
+            terminator,
+        }) => (payload, terminator),
         _ => return Vec::new(),
     };
 
@@ -389,7 +406,11 @@ impl SequenceBuilder {
             let shift = self.modifiers.contains(SequenceModifiers::SHIFT);
 
             let ch = character.chars().next().unwrap();
-            let unshifted_ch = if shift { ch.to_lowercase().next().unwrap() } else { ch };
+            let unshifted_ch = if shift {
+                ch.to_lowercase().next().unwrap()
+            } else {
+                ch
+            };
 
             let alternate_key_code = u32::from(ch);
             let mut unicode_key_code = u32::from(unshifted_ch);
@@ -658,7 +679,10 @@ pub struct SequenceBase {
 
 impl SequenceBase {
     fn new(payload: Cow<'static, str>, terminator: SequenceTerminator) -> Self {
-        Self { payload, terminator }
+        Self {
+            payload,
+            terminator,
+        }
     }
 }
 
