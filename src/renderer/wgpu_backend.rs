@@ -16,7 +16,6 @@ use crate::renderer::rects::RenderRect;
 pub mod atlas;
 pub mod glyph_cache;
 
-// 重新导出 builtin_font, 使 glyph_cache 能引用
 pub(crate) use crate::renderer::text::builtin_font;
 
 pub use glyph_cache::{Glyph, GlyphCache, LoadGlyph};
@@ -85,11 +84,6 @@ struct RectUniforms {
     _pad: f32,
 }
 
-/// 每个 atlas 对应的 bind group
-struct AtlasBindGroup {
-    bind_group: wgpu::BindGroup,
-}
-
 /// 初始文本实例 buffer 容量.
 ///
 /// 超出时会按需扩容, 避免启动时为极端场景固定分配 0x1_0000 个实例的 GPU buffer.
@@ -131,16 +125,14 @@ pub struct WgpuRenderer {
     // -- 文本渲染管线 --
     text_bg_pipeline: wgpu::RenderPipeline,
     text_fg_pipeline: wgpu::RenderPipeline,
-    text_bg_uniform_buffer: wgpu::Buffer,
-    text_fg_uniform_buffer: wgpu::Buffer,
-    text_bg_uniform_bind_group: wgpu::BindGroup,
-    text_fg_uniform_bind_group: wgpu::BindGroup,
+    text_uniform_buffer: wgpu::Buffer,
+    text_uniform_bind_group: wgpu::BindGroup,
     text_instance_buffer: wgpu::Buffer,
     text_instance_buffer_capacity: usize,
     text_index_buffer: wgpu::Buffer,
     text_texture_bind_group_layout: wgpu::BindGroupLayout,
     text_sampler: wgpu::Sampler,
-    text_instances_by_atlas: Vec<Vec<TextInstanceData>>,
+    text_instances: Vec<Vec<TextInstanceData>>,
 
     // -- 矩形渲染管线 --
     rect_pipelines: [wgpu::RenderPipeline; 4], // normal, undercurl, dotted, dashed
@@ -150,7 +142,7 @@ pub struct WgpuRenderer {
 
     // -- Atlas / 字形管理 --
     atlases: Vec<Atlas>,
-    atlas_bind_groups: Vec<AtlasBindGroup>,
+    atlas_bind_groups: Vec<wgpu::BindGroup>,
     current_atlas: usize,
 }
 
@@ -168,25 +160,14 @@ impl WgpuRenderer {
     ) -> Self {
         info!("正在初始化 wgpu 渲染器 (DX12)");
 
-        // =============================
-        // 文本着色器模块
-        // =============================
         let text_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("text_shader"),
             source: wgpu::ShaderSource::Wgsl(TEXT_SHADER.into()),
         });
 
-        // =============================
-        // 文本 uniform buffer + bind group layout
-        // =============================
-        let text_bg_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("text_bg_uniform_buffer"),
-            size: std::mem::size_of::<TextUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let text_fg_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("text_fg_uniform_buffer"),
+        // 文本 uniform 共享一个 buffer (bg 和 text 内容相同)
+        let text_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("text_uniform_buffer"),
             size: std::mem::size_of::<TextUniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -207,20 +188,12 @@ impl WgpuRenderer {
                 }],
             });
 
-        let text_bg_uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("text_bg_uniform_bind_group"),
+        let text_uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("text_uniform_bind_group"),
             layout: &text_uniform_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: text_bg_uniform_buffer.as_entire_binding(),
-            }],
-        });
-        let text_fg_uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("text_fg_uniform_bind_group"),
-            layout: &text_uniform_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: text_fg_uniform_buffer.as_entire_binding(),
+                resource: text_uniform_buffer.as_entire_binding(),
             }],
         });
 
@@ -519,9 +492,6 @@ impl WgpuRenderer {
             mapped_at_creation: false,
         });
 
-        // =============================
-        // 初始 Atlas
-        // =============================
         let initial_atlas = Atlas::new(&device, ATLAS_SIZE);
         let initial_bind_group = Self::create_atlas_bind_group(
             &device,
@@ -538,16 +508,14 @@ impl WgpuRenderer {
 
             text_bg_pipeline,
             text_fg_pipeline,
-            text_bg_uniform_buffer,
-            text_fg_uniform_buffer,
-            text_bg_uniform_bind_group,
-            text_fg_uniform_bind_group,
+            text_uniform_buffer,
+            text_uniform_bind_group,
             text_instance_buffer,
             text_instance_buffer_capacity: INITIAL_INSTANCE_CAPACITY,
             text_index_buffer,
             text_texture_bind_group_layout,
             text_sampler,
-            text_instances_by_atlas: Vec::new(),
+            text_instances: Vec::new(),
 
             rect_pipelines,
             rect_uniform_buffer,
@@ -565,8 +533,8 @@ impl WgpuRenderer {
         layout: &wgpu::BindGroupLayout,
         atlas: &Atlas,
         sampler: &wgpu::Sampler,
-    ) -> AtlasBindGroup {
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("atlas_bind_group"),
             layout,
             entries: &[
@@ -579,8 +547,7 @@ impl WgpuRenderer {
                     resource: wgpu::BindingResource::Sampler(sampler),
                 },
             ],
-        });
-        AtlasBindGroup { bind_group }
+        })
     }
 
     fn create_text_instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
@@ -625,10 +592,10 @@ impl WgpuRenderer {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
     ) {
-        // 收集所有实例数据, 按 atlas 分组. 复用上帧 Vec, 避免每帧重复分配.
-        let mut instances_by_atlas = std::mem::take(&mut self.text_instances_by_atlas);
-        for instances in &mut instances_by_atlas {
-            instances.clear();
+        // 每帧取上帧 Vec 复用（清空后直接用）
+        let mut instances_by_atlas = std::mem::take(&mut self.text_instances);
+        for v in &mut instances_by_atlas {
+            v.clear();
         }
         Self::ensure_instance_group(&mut instances_by_atlas, self.current_atlas)
             .reserve(size_info.columns() * size_info.screen_lines());
@@ -643,18 +610,11 @@ impl WgpuRenderer {
         // 确保 bind groups 同步
         self.sync_atlas_bind_groups();
 
-        // -- 背景 pass --
-        self.queue.write_buffer(
-            &self.text_bg_uniform_buffer,
-            0,
-            bytemuck::bytes_of(&uniforms),
-        );
-        self.queue.write_buffer(
-            &self.text_fg_uniform_buffer,
-            0,
-            bytemuck::bytes_of(&uniforms),
-        );
+        // 只写一次，bg 和 text 共享
+        self.queue
+            .write_buffer(&self.text_uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
+        // 简化：每帧新 Vec 避免复杂复用
         let total_instances = instances_by_atlas.iter().map(Vec::len).sum::<usize>();
         self.ensure_text_instance_buffer_capacity(total_instances);
 
@@ -700,14 +660,13 @@ impl WgpuRenderer {
                     0.0,
                     1.0,
                 );
-                rpass.set_bind_group(0, &self.text_bg_uniform_bind_group, &[]);
-                rpass.set_bind_group(1, &bind_group.bind_group, &[]);
+                rpass.set_bind_group(0, &self.text_uniform_bind_group, &[]);
+                rpass.set_bind_group(1, bind_group, &[]);
                 rpass.set_index_buffer(self.text_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 rpass.set_vertex_buffer(0, self.text_instance_buffer.slice(buffer_offset..));
                 rpass.draw_indexed(0..6, 0, 0..instances.len() as u32);
             }
 
-            // 文字 pass
             {
                 let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("text_fg_pass"),
@@ -734,15 +693,15 @@ impl WgpuRenderer {
                     0.0,
                     1.0,
                 );
-                rpass.set_bind_group(0, &self.text_fg_uniform_bind_group, &[]);
-                rpass.set_bind_group(1, &bind_group.bind_group, &[]);
+                rpass.set_bind_group(0, &self.text_uniform_bind_group, &[]);
+                rpass.set_bind_group(1, bind_group, &[]);
                 rpass.set_index_buffer(self.text_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 rpass.set_vertex_buffer(0, self.text_instance_buffer.slice(buffer_offset..));
                 rpass.draw_indexed(0..6, 0, 0..instances.len() as u32);
             }
         }
 
-        self.text_instances_by_atlas = instances_by_atlas;
+        self.text_instances = instances_by_atlas;
     }
 
     fn process_cell(
@@ -771,13 +730,7 @@ impl WgpuRenderer {
             character: cell.character,
         };
 
-        // 加载字形
-        let mut loader = WgpuGlyphLoader {
-            device: &self.device,
-            queue: &self.queue,
-            atlases: &mut self.atlases,
-            current_atlas: &mut self.current_atlas,
-        };
+        let mut loader = self.loader_api();
         let glyph = glyph_cache.get(glyph_key, &mut loader, true);
         let instance = Self::create_instance(&cell, &glyph);
         Self::ensure_instance_group(instances_by_atlas, glyph.atlas_index).push(instance);
@@ -1110,13 +1063,8 @@ impl WgpuRenderer {
         vertices.push(quad[1]);
     }
 
-    /// 调整渲染器大小 (viewport 更新).
-    /// wgpu 不需要显式设置 viewport, 它由 surface 配置决定.
-    pub fn resize(&self, _size_info: &SizeInfo) {
-        // wgpu 中 viewport 通过 surface reconfigure 处理,
-        // 不需要像 OpenGL 那样的 glViewport 调用.
-        // 保留此函数以保持接口兼容.
-    }
+    /// 调整渲染器大小（当前 viewport 由每帧 render pass 动态设置，此函数保留接口兼容）。
+    pub fn resize(&self, _size_info: &SizeInfo) {}
 
     /// 获取用于 glyph 加载的 loader api.
     pub fn loader_api(&mut self) -> WgpuLoaderApi<'_> {
@@ -1146,30 +1094,6 @@ pub struct WgpuLoaderApi<'a> {
 }
 
 impl LoadGlyph for WgpuLoaderApi<'_> {
-    fn load_glyph(&mut self, rasterized: &RasterizedGlyph) -> Glyph {
-        Atlas::load_glyph(
-            self.device,
-            self.queue,
-            self.atlases,
-            self.current_atlas,
-            rasterized,
-        )
-    }
-
-    fn clear(&mut self) {
-        Atlas::clear_atlas(self.atlases, self.current_atlas);
-    }
-}
-
-/// 用于在渲染期间加载字形的内部 loader.
-struct WgpuGlyphLoader<'a> {
-    device: &'a wgpu::Device,
-    queue: &'a wgpu::Queue,
-    atlases: &'a mut Vec<Atlas>,
-    current_atlas: &'a mut usize,
-}
-
-impl LoadGlyph for WgpuGlyphLoader<'_> {
     fn load_glyph(&mut self, rasterized: &RasterizedGlyph) -> Glyph {
         Atlas::load_glyph(
             self.device,

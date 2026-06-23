@@ -1,15 +1,10 @@
 name: CI
 
-on:
-  push:
-  workflow_dispatch:
+on: [push, workflow_dispatch]
 
 jobs:
   build:
     env:
-      PROJECT_REPOSITORY: ""
-      PROJECT_VERSION: ""
-      PROJECT_PATH: ""
       PROJECT_BIN: alacritty
     strategy:
       matrix:
@@ -44,13 +39,6 @@ jobs:
 
       - name: Checkout self
         uses: actions/checkout@v6
-
-      # - name: Checkout ${{ env.PROJECT_PATH }}
-      #   uses: actions/checkout@v6
-      #   with:
-      #     repository: ${{ env.PROJECT_REPOSITORY }}
-      #     ref: refs/tags/${{ env.PROJECT_VERSION }}
-      #     path: ${{ env.PROJECT_PATH }}
 
       - name: Linux install deps
         if: runner.os == 'Linux'
