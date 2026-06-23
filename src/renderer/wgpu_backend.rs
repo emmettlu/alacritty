@@ -618,86 +618,111 @@ impl WgpuRenderer {
         let total_instances = instances_by_atlas.iter().map(Vec::len).sum::<usize>();
         self.ensure_text_instance_buffer_capacity(total_instances);
 
-        let mut instance_offset = 0usize;
-        for (atlas_idx, instances) in instances_by_atlas.iter().enumerate() {
+        // 1. 先把所有实例数据写到 buffer（只写一次）
+        let mut write_offset = 0usize;
+        for instances in instances_by_atlas.iter() {
             if instances.is_empty() {
                 continue;
             }
-
             let buffer_offset =
-                (instance_offset * std::mem::size_of::<TextInstanceData>()) as wgpu::BufferAddress;
+                (write_offset * std::mem::size_of::<TextInstanceData>()) as wgpu::BufferAddress;
             self.queue.write_buffer(
                 &self.text_instance_buffer,
                 buffer_offset,
                 bytemuck::cast_slice(instances),
             );
-            instance_offset += instances.len();
+            write_offset += instances.len();
+        }
 
-            let bind_group = &self.atlas_bind_groups[atlas_idx];
-            {
-                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("text_bg_pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                rpass.set_pipeline(&self.text_bg_pipeline);
-                rpass.set_viewport(
-                    size_info.padding_x(),
-                    size_info.padding_y(),
-                    size_info.width() - 2.0 * size_info.padding_x(),
-                    size_info.height() - 2.0 * size_info.padding_y(),
-                    0.0,
-                    1.0,
-                );
-                rpass.set_bind_group(0, &self.text_uniform_bind_group, &[]);
+        // 2. 背景只开一次 render pass（所有 atlas 在里面切换 bind group）
+        {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("text_bg_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            rpass.set_pipeline(&self.text_bg_pipeline);
+            rpass.set_viewport(
+                size_info.padding_x(),
+                size_info.padding_y(),
+                size_info.width() - 2.0 * size_info.padding_x(),
+                size_info.height() - 2.0 * size_info.padding_y(),
+                0.0,
+                1.0,
+            );
+            rpass.set_bind_group(0, &self.text_uniform_bind_group, &[]);
+            rpass.set_index_buffer(self.text_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+
+            let mut draw_offset = 0usize;
+            for (atlas_idx, instances) in instances_by_atlas.iter().enumerate() {
+                if instances.is_empty() {
+                    draw_offset += instances.len();
+                    continue;
+                }
+                let buffer_offset =
+                    (draw_offset * std::mem::size_of::<TextInstanceData>()) as wgpu::BufferAddress;
+                let bind_group = &self.atlas_bind_groups[atlas_idx];
                 rpass.set_bind_group(1, bind_group, &[]);
-                rpass.set_index_buffer(self.text_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 rpass.set_vertex_buffer(0, self.text_instance_buffer.slice(buffer_offset..));
                 rpass.draw_indexed(0..6, 0, 0..instances.len() as u32);
+                draw_offset += instances.len();
             }
+        }
 
-            {
-                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("text_fg_pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                rpass.set_pipeline(&self.text_fg_pipeline);
-                rpass.set_viewport(
-                    size_info.padding_x(),
-                    size_info.padding_y(),
-                    size_info.width() - 2.0 * size_info.padding_x(),
-                    size_info.height() - 2.0 * size_info.padding_y(),
-                    0.0,
-                    1.0,
-                );
-                rpass.set_bind_group(0, &self.text_uniform_bind_group, &[]);
+        // 3. 文字只开一次 render pass
+        {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("text_fg_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            rpass.set_pipeline(&self.text_fg_pipeline);
+            rpass.set_viewport(
+                size_info.padding_x(),
+                size_info.padding_y(),
+                size_info.width() - 2.0 * size_info.padding_x(),
+                size_info.height() - 2.0 * size_info.padding_y(),
+                0.0,
+                1.0,
+            );
+            rpass.set_bind_group(0, &self.text_uniform_bind_group, &[]);
+            rpass.set_index_buffer(self.text_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+
+            let mut draw_offset = 0usize;
+            for (atlas_idx, instances) in instances_by_atlas.iter().enumerate() {
+                if instances.is_empty() {
+                    draw_offset += instances.len();
+                    continue;
+                }
+                let buffer_offset =
+                    (draw_offset * std::mem::size_of::<TextInstanceData>()) as wgpu::BufferAddress;
+                let bind_group = &self.atlas_bind_groups[atlas_idx];
                 rpass.set_bind_group(1, bind_group, &[]);
-                rpass.set_index_buffer(self.text_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 rpass.set_vertex_buffer(0, self.text_instance_buffer.slice(buffer_offset..));
                 rpass.draw_indexed(0..6, 0, 0..instances.len() as u32);
+                draw_offset += instances.len();
             }
         }
 
