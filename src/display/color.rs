@@ -6,7 +6,6 @@ use log::trace;
 use serde::de::{Error as SerdeError, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-
 use crate::terminal::term::color::COUNT;
 use crate::terminal::vte::ansi::{NamedColor, Rgb as VteRgb};
 
@@ -14,6 +13,28 @@ use crate::config::color::Colors;
 
 /// Factor for automatic computation of dim colors.
 pub const DIM_FACTOR: f32 = 0.66;
+
+/// 将 sRGB 字节值转换为线性空间 f32.
+#[inline]
+pub fn srgb_byte_to_linear(c: u8) -> f32 {
+    let v = c as f32 / 255.0;
+    if v <= 0.04045 {
+        v / 12.92
+    } else {
+        ((v + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// 将线性空间 f32 (0~1) 转换回 sRGB 字节值.
+#[inline]
+pub fn linear_to_srgb_byte(c: f32) -> u8 {
+    let v = if c <= 0.0031308 {
+        c * 12.92
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    };
+    (v * 255.0 + 0.5) as u8
+}
 
 #[derive(Copy, Clone)]
 pub struct List([Rgb; COUNT]);
@@ -52,16 +73,20 @@ impl List {
         self[NamedColor::BrightMagenta] = colors.bright.magenta;
         self[NamedColor::BrightCyan] = colors.bright.cyan;
         self[NamedColor::BrightWhite] = colors.bright.white;
-        self[NamedColor::BrightForeground] =
-            colors.primary.bright_foreground.unwrap_or(colors.primary.foreground);
+        self[NamedColor::BrightForeground] = colors
+            .primary
+            .bright_foreground
+            .unwrap_or(colors.primary.foreground);
 
         // Foreground and background.
         self[NamedColor::Foreground] = colors.primary.foreground;
         self[NamedColor::Background] = colors.primary.background;
 
         // Dims.
-        self[NamedColor::DimForeground] =
-            colors.primary.dim_foreground.unwrap_or(colors.primary.foreground * DIM_FACTOR);
+        self[NamedColor::DimForeground] = colors
+            .primary
+            .dim_foreground
+            .unwrap_or(colors.primary.foreground * DIM_FACTOR);
         match colors.dim {
             Some(ref dim) => {
                 trace!("Using config-provided dim colors");
@@ -73,7 +98,7 @@ impl List {
                 self[NamedColor::DimMagenta] = dim.magenta;
                 self[NamedColor::DimCyan] = dim.cyan;
                 self[NamedColor::DimWhite] = dim.white;
-            },
+            }
             None => {
                 trace!("Deriving dim colors from normal colors");
                 self[NamedColor::DimBlack] = colors.normal.black * DIM_FACTOR;
@@ -84,7 +109,7 @@ impl List {
                 self[NamedColor::DimMagenta] = colors.normal.magenta * DIM_FACTOR;
                 self[NamedColor::DimCyan] = colors.normal.cyan * DIM_FACTOR;
                 self[NamedColor::DimWhite] = colors.normal.white * DIM_FACTOR;
-            },
+            }
         }
     }
 
@@ -95,8 +120,10 @@ impl List {
             for g in 0..6 {
                 for b in 0..6 {
                     // Override colors 16..232 with the config (if present).
-                    if let Some(indexed_color) =
-                        colors.indexed_colors.iter().find(|ic| ic.index() == index as u8)
+                    if let Some(indexed_color) = colors
+                        .indexed_colors
+                        .iter()
+                        .find(|ic| ic.index() == index as u8)
                     {
                         self[index] = indexed_color.color;
                     } else {
@@ -122,8 +149,10 @@ impl List {
             let color_index = 16 + 216 + i;
 
             // Override colors 232..256 with the config (if present).
-            if let Some(indexed_color) =
-                colors.indexed_colors.iter().find(|ic| ic.index() == color_index)
+            if let Some(indexed_color) = colors
+                .indexed_colors
+                .iter()
+                .find(|ic| ic.index() == color_index)
             {
                 self[index] = indexed_color.color;
                 index += 1;
@@ -203,8 +232,13 @@ impl Deref for Rgb {
 impl Mul<f32> for Rgb {
     type Output = Rgb;
 
+    /// 在 linear 空间做乘法 (dim/bright), 避免 sRGB 空间操作导致的亮度失真.
     fn mul(self, rhs: f32) -> Self::Output {
-        Rgb(self.0 * rhs)
+        Rgb::new(
+            linear_to_srgb_byte(srgb_byte_to_linear(self.r) * rhs),
+            linear_to_srgb_byte(srgb_byte_to_linear(self.g) * rhs),
+            linear_to_srgb_byte(srgb_byte_to_linear(self.b) * rhs),
+        )
     }
 }
 
@@ -300,7 +334,7 @@ impl FromStr for Rgb {
                 color >>= 8;
                 let r = color as u8;
                 Ok(Rgb::new(r, g, b))
-            },
+            }
             Err(_) => Err(()),
         }
     }
@@ -358,11 +392,15 @@ impl<'de> Deserialize<'de> for CellRgb {
                 }
 
                 Rgb::from_str(value).map(CellRgb::Rgb).map_err(|_| {
-                    E::custom(format!("failed to parse color {value}; expected {EXPECTING}"))
+                    E::custom(format!(
+                        "failed to parse color {value}; expected {EXPECTING}"
+                    ))
                 })
             }
         }
 
-        deserializer.deserialize_str(CellRgbVisitor).map_err(D::Error::custom)
+        deserializer
+            .deserialize_str(CellRgbVisitor)
+            .map_err(D::Error::custom)
     }
 }

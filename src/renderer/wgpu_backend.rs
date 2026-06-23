@@ -101,18 +101,27 @@ const WIDE_CHAR_FLAG: u32 = 2;
 
 /// 将 sRGB 值转换为线性空间.
 /// sRGB 颜色在传递给 GPU 前需要进行此转换, 否则颜色会偏浅.
+/// 使用标准 sRGB 分段公式, 替代近似 powf(2.2).
 #[inline]
 fn srgb_to_linear(srgb: u8) -> u8 {
-    let srgb = srgb as f32 / 255.0;
-    let linear = srgb.powf(2.2);
+    let c = srgb as f32 / 255.0;
+    let linear = if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    };
     (linear * 255.0).round() as u8
 }
 
 /// f32 版本的 sRGB 到线性空间转换
 #[inline]
 fn srgb_to_linear_f32(srgb: u8) -> f32 {
-    let srgb = srgb as f32 / 255.0;
-    srgb.powf(2.2)
+    let c = srgb as f32 / 255.0;
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
 }
 
 pub struct WgpuRenderer {
@@ -683,6 +692,14 @@ impl WgpuRenderer {
                     multiview_mask: None,
                 });
                 rpass.set_pipeline(&self.text_bg_pipeline);
+                rpass.set_viewport(
+                    size_info.padding_x(),
+                    size_info.padding_y(),
+                    size_info.width() - 2.0 * size_info.padding_x(),
+                    size_info.height() - 2.0 * size_info.padding_y(),
+                    0.0,
+                    1.0,
+                );
                 rpass.set_bind_group(0, &self.text_bg_uniform_bind_group, &[]);
                 rpass.set_bind_group(1, &bind_group.bind_group, &[]);
                 rpass.set_index_buffer(self.text_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -709,6 +726,14 @@ impl WgpuRenderer {
                     multiview_mask: None,
                 });
                 rpass.set_pipeline(&self.text_fg_pipeline);
+                rpass.set_viewport(
+                    size_info.padding_x(),
+                    size_info.padding_y(),
+                    size_info.width() - 2.0 * size_info.padding_x(),
+                    size_info.height() - 2.0 * size_info.padding_y(),
+                    0.0,
+                    1.0,
+                );
                 rpass.set_bind_group(0, &self.text_fg_uniform_bind_group, &[]);
                 rpass.set_bind_group(1, &bind_group.bind_group, &[]);
                 rpass.set_index_buffer(self.text_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -886,9 +911,9 @@ impl WgpuRenderer {
         alpha: f32,
     ) {
         // 将 sRGB 颜色转换为线性空间
-        let r = srgb_to_linear_f32(color.r).min(1.0) * alpha;
-        let g = srgb_to_linear_f32(color.g).min(1.0) * alpha;
-        let b = srgb_to_linear_f32(color.b).min(1.0) * alpha;
+        let r = srgb_to_linear_f32(color.r) * alpha;
+        let g = srgb_to_linear_f32(color.g) * alpha;
+        let b = srgb_to_linear_f32(color.b) * alpha;
 
         let _rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("clear_pass"),
@@ -1015,6 +1040,14 @@ impl WgpuRenderer {
                     multiview_mask: None,
                 });
                 rpass.set_pipeline(&self.rect_pipelines[kind_idx]);
+                rpass.set_viewport(
+                    size_info.padding_x(),
+                    size_info.padding_y(),
+                    size_info.width() - 2.0 * size_info.padding_x(),
+                    size_info.height() - 2.0 * size_info.padding_y(),
+                    0.0,
+                    1.0,
+                );
                 rpass.set_bind_group(0, &self.rect_uniform_bind_group, &[]);
                 rpass.set_vertex_buffer(0, self.rect_vertex_buffer.slice(..));
                 rpass.draw(0..vertices.len() as u32, 0..1);
