@@ -216,12 +216,11 @@ impl SizeInfo<f32> {
         cell_width: f32,
         cell_height: f32,
         mut padding_x: f32,
-        mut padding_y: f32,
+        padding_y: f32,
         dynamic_padding: bool,
     ) -> SizeInfo {
         if dynamic_padding {
             padding_x = Self::dynamic_padding(padding_x.floor(), width, cell_width);
-            padding_y = Self::dynamic_padding(padding_y.floor(), height, cell_height);
         }
 
         let lines = (height - 2. * padding_y) / cell_height;
