@@ -379,8 +379,6 @@ pub struct Display {
 
 impl Display {
     pub fn new(mut window: Window, config: &UiConfig) -> Result<Display, Error> {
-        use std::sync::Arc;
-
         let scale_factor = window.scale_factor as f32;
         let rasterizer = Rasterizer::new()?;
 
@@ -445,9 +443,6 @@ impl Display {
         }))
         .map_err(|e| Error::Wgpu(format!("request device: {e}")))?;
 
-        let device = Arc::new(device);
-        let queue = Arc::new(queue);
-
         let viewport_size = window.inner_size();
         let caps = wgpu_surface.get_capabilities(&adapter);
         let surface_format = caps
@@ -500,8 +495,7 @@ impl Display {
         wgpu_surface.configure(&device, &wgpu_surface_config);
 
         // 创建 wgpu 渲染器.
-        let mut wgpu_renderer =
-            WgpuRenderer::new(Arc::clone(&device), Arc::clone(&queue), surface_format);
+        let mut wgpu_renderer = WgpuRenderer::new(device, queue, surface_format);
 
         // 预加载常用字形.
         debug!("Filling glyph cache with common glyphs");
@@ -547,14 +541,18 @@ impl Display {
             let view = output
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
-            let mut encoder = device.create_command_encoder(&Default::default());
+            let mut encoder = wgpu_renderer
+                .device()
+                .create_command_encoder(&Default::default());
             wgpu_renderer.clear(
                 &mut encoder,
                 &view,
                 background_color,
                 config.window_opacity(),
             );
-            queue.submit(std::iter::once(encoder.finish()));
+            wgpu_renderer
+                .queue()
+                .submit(std::iter::once(encoder.finish()));
             output.present();
         }
 

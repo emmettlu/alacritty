@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use crossfont::{Metrics, RasterizedGlyph};
 use log::info;
 
@@ -110,8 +108,8 @@ fn srgb_to_linear_f32(srgb: u8) -> f32 {
 }
 
 pub struct WgpuRenderer {
-    device: Arc<wgpu::Device>,
-    queue: Arc<wgpu::Queue>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
 
     // -- 文本渲染管线 --
     text_bg_pipeline: wgpu::RenderPipeline,
@@ -120,7 +118,6 @@ pub struct WgpuRenderer {
     text_uniform_bind_group: wgpu::BindGroup,
     text_instance_buffer: wgpu::Buffer,
     text_instance_buffer_capacity: usize,
-    text_index_buffer: wgpu::Buffer,
     text_texture_bind_group_layout: wgpu::BindGroupLayout,
     text_sampler: wgpu::Sampler,
     text_instances: Vec<Vec<TextInstanceData>>,
@@ -145,8 +142,8 @@ impl std::fmt::Debug for WgpuRenderer {
 
 impl WgpuRenderer {
     pub fn new(
-        device: Arc<wgpu::Device>,
-        queue: Arc<wgpu::Queue>,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
         surface_format: wgpu::TextureFormat,
     ) -> Self {
         info!("正在初始化 wgpu 渲染器 (DX12)");
@@ -362,18 +359,6 @@ impl WgpuRenderer {
         });
 
         // =============================
-        // 文本 index buffer (6 个索引构成一个四边形)
-        // =============================
-        let indices: [u32; 6] = [0, 1, 3, 1, 2, 3];
-        let text_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("text_index_buffer"),
-            size: (6 * std::mem::size_of::<u32>()) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&text_index_buffer, 0, bytemuck::cast_slice(&indices));
-
-        // =============================
         // 文本 instance buffer
         // =============================
         let text_instance_buffer =
@@ -503,7 +488,6 @@ impl WgpuRenderer {
             text_uniform_bind_group,
             text_instance_buffer,
             text_instance_buffer_capacity: INITIAL_INSTANCE_CAPACITY,
-            text_index_buffer,
             text_texture_bind_group_layout,
             text_sampler,
             text_instances: Vec::new(),
@@ -662,11 +646,9 @@ impl WgpuRenderer {
                 1.0,
             );
             rpass.set_bind_group(0, &self.text_uniform_bind_group, &[]);
-            rpass.set_index_buffer(self.text_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-
             rpass.set_bind_group(1, &self.atlas_bind_groups[0], &[]);
             rpass.set_vertex_buffer(0, self.text_instance_buffer.slice(..));
-            rpass.draw_indexed(0..6, 0, 0..total_instances as u32);
+            rpass.draw(0..6, 0..total_instances as u32);
         }
 
         // 3. 文字只开一次 render pass
@@ -699,7 +681,6 @@ impl WgpuRenderer {
                 1.0,
             );
             rpass.set_bind_group(0, &self.text_uniform_bind_group, &[]);
-            rpass.set_index_buffer(self.text_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
 
             let mut draw_offset = 0usize;
             for (atlas_idx, instances) in instances_by_atlas.iter().enumerate() {
@@ -712,7 +693,7 @@ impl WgpuRenderer {
                 let bind_group = &self.atlas_bind_groups[atlas_idx];
                 rpass.set_bind_group(1, bind_group, &[]);
                 rpass.set_vertex_buffer(0, self.text_instance_buffer.slice(buffer_offset..));
-                rpass.draw_indexed(0..6, 0, 0..instances.len() as u32);
+                rpass.draw(0..6, 0..instances.len() as u32);
                 draw_offset += instances.len();
             }
         }
