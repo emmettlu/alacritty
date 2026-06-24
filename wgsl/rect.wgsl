@@ -60,7 +60,7 @@ fn fs_undercurl(input: VertexOutput) -> @location(0) vec4<f32> {
     let dst = max(y - undercurl_top, max(undercurl_bottom - y, 0.0));
 
     // 简单的 AA: 通过 1/x^2 增强, 保持下划线粗细并足够醒目.
-    let alpha = 1.0 - dst * dst;
+    let alpha = clamp(1.0 - dst * dst, 0.0, 1.0) * input.color.a;
 
     return vec4<f32>(input.color.rgb, alpha);
 }
@@ -84,6 +84,7 @@ fn fs_dotted(input: VertexOutput) -> @location(0) vec4<f32> {
         if i32(x) % 2 != i32(cell_even) {
             alpha = 0.0;
         }
+        alpha = clamp(alpha, 0.0, 1.0) * input.color.a;
 
         return vec4<f32>(input.color.rgb, alpha);
     } else {
@@ -101,7 +102,11 @@ fn fs_dotted(input: VertexOutput) -> @location(0) vec4<f32> {
         let distance_left = sqrt(dx_left * dx_left + dy * dy);
         let distance_right = sqrt(dx_right * dx_right + dy * dy);
 
-        let alpha = max(1.0 - (min(distance_left, distance_right) - radius), 0.0);
+        let alpha = clamp(
+            max(1.0 - (min(distance_left, distance_right) - radius), 0.0),
+            0.0,
+            1.0,
+        ) * input.color.a;
         return vec4<f32>(input.color.rgb, alpha);
     }
 }
@@ -118,6 +123,7 @@ fn fs_dashed(input: VertexOutput) -> @location(0) vec4<f32> {
     if x > half_dash_len - 1.0 && x < uniforms.cell_width - half_dash_len {
         alpha = 0.0;
     }
+    alpha = clamp(alpha, 0.0, 1.0) * input.color.a;
 
     return vec4<f32>(input.color.rgb, alpha);
 }

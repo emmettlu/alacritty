@@ -40,6 +40,7 @@ impl IpcListener {
     /// The stream is provided only for GetConfig requests so the caller can reply on it.
     pub fn try_recv(&mut self) -> Option<(SocketMessage, Option<UnixStream>)> {
         let (stream, _) = self.socket.accept().ok()?;
+        stream.set_nonblocking(true).ok()?;
 
         self.data.clear();
         let mut reader = BufReader::new(&stream);
@@ -76,6 +77,7 @@ pub fn send_reply(stream: &mut UnixStream, message: SocketReply) {
 
 /// Send IPC message reply, returning possible errors.
 fn send_reply_fallible(stream: &mut UnixStream, message: SocketReply) -> IoResult<()> {
+    stream.set_nonblocking(false)?;
     let json = serde_json::to_string(&message).map_err(IoError::other)?;
     stream.write_all(json.as_bytes())?;
     stream.flush()?;

@@ -3,6 +3,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
+use log::debug;
 use winit::event_loop::EventLoopProxy;
 use winit::window::WindowId;
 
@@ -48,7 +49,10 @@ pub struct Scheduler {
 
 impl Scheduler {
     pub fn new(event_proxy: EventLoopProxy<Event>) -> Self {
-        Self { timers: VecDeque::new(), event_proxy }
+        Self {
+            timers: VecDeque::new(),
+            event_proxy,
+        }
     }
 
     /// Process all pending timers.
@@ -65,7 +69,9 @@ impl Scheduler {
                     self.schedule(timer.event.clone(), interval, true, timer.id);
                 }
 
-                let _ = self.event_proxy.send_event(timer.event);
+                if let Err(err) = self.event_proxy.send_event(timer.event) {
+                    debug!("Failed to send scheduled event: {err:?}");
+                }
             }
         }
 
@@ -86,7 +92,15 @@ impl Scheduler {
         // Set the automatic event repeat rate.
         let interval = if repeat { Some(interval) } else { None };
 
-        self.timers.insert(index, Timer { interval, deadline, event, id: timer_id });
+        self.timers.insert(
+            index,
+            Timer {
+                interval,
+                deadline,
+                event,
+                id: timer_id,
+            },
+        );
     }
 
     /// Cancel a scheduled event.

@@ -13,6 +13,7 @@ crossfont = "0"
 dirs = "6"
 log = { version = "0", features = ["serde", "std"] }
 polling = "3"
+pollster = "0"
 regex-automata = "0"
 rustc-hash = "2"
 serde = { version = "1", features = ["derive", "rc"] }
@@ -24,7 +25,7 @@ vte = { version = "0", default-features = false, features = ["ansi", "serde", "s
 [dev-dependencies]
 clap_complete = "4"
 
-[target.'cfg(unix)'.dependencies]
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 rustix = { version = "1", default-features = false, features = [
   "event",
   "fs",
@@ -44,6 +45,19 @@ winit = { version = "0", default-features = false, features = [
   "x11",
 ] }
 x11rb = { version = "0", features = ["all-extensions"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+rustix = { version = "1", default-features = false, features = [
+  "event",
+  "fs",
+  "process",
+  "pty",
+  "stdio",
+  "termios",
+] }
+signal-hook = "0"
+wgpu = { version = "29", default-features = false, features = ["metal", "std", "wgsl"] }
+winit = { version = "0", default-features = false, features = ["rwh_06", "serde"] }
 
 [target.'cfg(windows)'.dependencies]
 wgpu = { version = "29", default-features = false, features = ["dx12", "std", "wgsl"] }

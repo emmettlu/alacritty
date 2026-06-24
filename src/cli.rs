@@ -295,7 +295,7 @@ impl ParsedOptions {
                         target: LOG_TARGET_IPC_CONFIG,
                         "Unable to override option '{option}': {err}"
                     );
-                    self.config_options.swap_remove(i);
+                    self.config_options.remove(i);
                 }
                 Ok(_) => i += 1,
             }
@@ -320,11 +320,13 @@ impl ParsedOptions {
         }
 
         let mut config = (*config).clone();
-        let mut i = 0;
-        while i < self.config_options.len() {
-            let (_, parsed) = &self.config_options[i];
-            config.replace(parsed.clone()).unwrap();
-            i += 1;
+        for (option, parsed) in &self.config_options {
+            if let Err(err) = config.replace(parsed.clone()) {
+                error!(
+                    target: LOG_TARGET_IPC_CONFIG,
+                    "Unable to override option '{option}': {err}"
+                );
+            }
         }
         Rc::new(config)
     }

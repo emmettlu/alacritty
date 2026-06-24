@@ -9,7 +9,7 @@ use crate::terminal::term::cell::Flags;
 use unicode_width::UnicodeWidthChar;
 
 use crate::display::SizeInfo;
-use crate::display::color::Rgb;
+use crate::display::color::{Rgb, srgb_byte_to_linear};
 use crate::display::content::RenderableCell;
 use crate::renderer::rects::RenderRect;
 
@@ -98,24 +98,15 @@ const WIDE_CHAR_FLAG: u32 = 2;
 /// 使用标准 sRGB 分段公式, 替代近似 powf(2.2).
 #[inline]
 fn srgb_to_linear(srgb: u8) -> u8 {
-    let c = srgb as f32 / 255.0;
-    let linear = if c <= 0.04045 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
-    };
-    (linear * 255.0).round() as u8
+    (srgb_byte_to_linear(srgb) * 255.0)
+        .round()
+        .clamp(0.0, 255.0) as u8
 }
 
 /// f32 版本的 sRGB 到线性空间转换
 #[inline]
 fn srgb_to_linear_f32(srgb: u8) -> f32 {
-    let c = srgb as f32 / 255.0;
-    if c <= 0.04045 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
-    }
+    srgb_byte_to_linear(srgb)
 }
 
 pub struct WgpuRenderer {
@@ -550,6 +541,14 @@ impl WgpuRenderer {
         })
     }
 
+    fn content_viewport(size_info: &SizeInfo) -> (f32, f32, f32, f32) {
+        let x = size_info.padding_x();
+        let y = size_info.padding_y();
+        let width = (size_info.width() - 2.0 * x).max(1.0);
+        let height = (size_info.height() - 2.0 * y).max(1.0);
+        (x, y, width, height)
+    }
+
     fn create_text_instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
         device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("text_instance_buffer"),
@@ -597,7 +596,7 @@ impl WgpuRenderer {
         for v in &mut instances_by_atlas {
             v.clear();
         }
-        Self::ensure_instance_group(&mut instances_by_atlas, self.current_atlas)
+        Self::ensure_instance_group(&mut instances_by_atlas, 0)
             .reserve(size_info.columns() * size_info.screen_lines());
 
         for cell in cells {
@@ -614,7 +613,6 @@ impl WgpuRenderer {
         self.queue
             .write_buffer(&self.text_uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        // 简化：每帧新 Vec 避免复杂复用
         let total_instances = instances_by_atlas.iter().map(Vec::len).sum::<usize>();
         self.ensure_text_instance_buffer_capacity(total_instances);
 
@@ -634,8 +632,8 @@ impl WgpuRenderer {
             write_offset += instances.len();
         }
 
-        // 2. 背景只开一次 render pass（所有 atlas 在里面切换 bind group）
-        {
+        // 2. 背景只开一次 render pass, 背景不依赖 atlas.
+        if total_instances > 0 {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("text_bg_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -653,35 +651,26 @@ impl WgpuRenderer {
                 multiview_mask: None,
             });
             rpass.set_pipeline(&self.text_bg_pipeline);
+            let (viewport_x, viewport_y, viewport_width, viewport_height) =
+                Self::content_viewport(size_info);
             rpass.set_viewport(
-                size_info.padding_x(),
-                size_info.padding_y(),
-                size_info.width() - 2.0 * size_info.padding_x(),
-                size_info.height() - 2.0 * size_info.padding_y(),
+                viewport_x,
+                viewport_y,
+                viewport_width,
+                viewport_height,
                 0.0,
                 1.0,
             );
             rpass.set_bind_group(0, &self.text_uniform_bind_group, &[]);
             rpass.set_index_buffer(self.text_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
 
-            let mut draw_offset = 0usize;
-            for (atlas_idx, instances) in instances_by_atlas.iter().enumerate() {
-                if instances.is_empty() {
-                    draw_offset += instances.len();
-                    continue;
-                }
-                let buffer_offset =
-                    (draw_offset * std::mem::size_of::<TextInstanceData>()) as wgpu::BufferAddress;
-                let bind_group = &self.atlas_bind_groups[atlas_idx];
-                rpass.set_bind_group(1, bind_group, &[]);
-                rpass.set_vertex_buffer(0, self.text_instance_buffer.slice(buffer_offset..));
-                rpass.draw_indexed(0..6, 0, 0..instances.len() as u32);
-                draw_offset += instances.len();
-            }
+            rpass.set_bind_group(1, &self.atlas_bind_groups[0], &[]);
+            rpass.set_vertex_buffer(0, self.text_instance_buffer.slice(..));
+            rpass.draw_indexed(0..6, 0, 0..total_instances as u32);
         }
 
         // 3. 文字只开一次 render pass
-        {
+        if total_instances > 0 {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("text_fg_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -699,11 +688,13 @@ impl WgpuRenderer {
                 multiview_mask: None,
             });
             rpass.set_pipeline(&self.text_fg_pipeline);
+            let (viewport_x, viewport_y, viewport_width, viewport_height) =
+                Self::content_viewport(size_info);
             rpass.set_viewport(
-                size_info.padding_x(),
-                size_info.padding_y(),
-                size_info.width() - 2.0 * size_info.padding_x(),
-                size_info.height() - 2.0 * size_info.padding_y(),
+                viewport_x,
+                viewport_y,
+                viewport_width,
+                viewport_height,
                 0.0,
                 1.0,
             );
@@ -773,7 +764,9 @@ impl WgpuRenderer {
                     character,
                 };
                 let glyph = glyph_cache.get(glyph_key, &mut loader, false);
-                let instance = Self::create_instance(&cell, &glyph);
+                let mut zerowidth_cell = cell.clone();
+                zerowidth_cell.bg_alpha = 0.0;
+                let instance = Self::create_instance(&zerowidth_cell, &glyph);
                 Self::ensure_instance_group(instances_by_atlas, glyph.atlas_index).push(instance);
             }
         }
@@ -823,13 +816,10 @@ impl WgpuRenderer {
     }
 
     fn compute_text_uniforms(&self, size: &SizeInfo) -> TextUniforms {
-        let width = size.width();
-        let height = size.height();
-        let padding_x = size.padding_x();
-        let padding_y = size.padding_y();
+        let (_, _, drawable_width, drawable_height) = Self::content_viewport(size);
 
-        let scale_x = 2. / (width - 2. * padding_x);
-        let scale_y = -2. / (height - 2. * padding_y);
+        let scale_x = 2. / drawable_width;
+        let scale_y = -2. / drawable_height;
         let offset_x = -1.;
         let offset_y = 1.;
 
@@ -853,20 +843,16 @@ impl WgpuRenderer {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
     ) {
-        let mut wide_char_spacer = false;
-        let cells = string_chars.enumerate().filter_map(|(i, character)| {
-            let flags = if wide_char_spacer {
-                wide_char_spacer = false;
-                return None;
-            } else if character.width() == Some(2) {
-                wide_char_spacer = true;
+        let mut column = point.column;
+        let cells = string_chars.map(|character| {
+            let width = character.width().unwrap_or(1).max(1);
+            let flags = if width > 1 {
                 Flags::WIDE_CHAR
             } else {
                 Flags::empty()
             };
-
-            Some(RenderableCell {
-                point: Point::new(point.line, point.column + i),
+            let cell = RenderableCell {
+                point: Point::new(point.line, column),
                 character,
                 extra: None,
                 flags,
@@ -874,7 +860,9 @@ impl WgpuRenderer {
                 fg,
                 bg,
                 underline: fg,
-            })
+            };
+            column += width;
+            cell
         });
 
         self.draw_cells(size_info, glyph_cache, cells, encoder, view);
@@ -932,8 +920,9 @@ impl WgpuRenderer {
 
         // 矩形和文本必须使用同一套内容区域投影, 否则 hollow cursor 等矩形会随行号
         // 逐渐偏离文本位置.
-        let half_width = (size_info.width() - 2. * size_info.padding_x()) / 2.;
-        let half_height = (size_info.height() - 2. * size_info.padding_y()) / 2.;
+        let (_, _, drawable_width, drawable_height) = Self::content_viewport(size_info);
+        let half_width = drawable_width / 2.;
+        let half_height = drawable_height / 2.;
 
         // 按矩形类型分类顶点
         let mut vertices_by_kind: [Vec<RectVertex>; 4] = Default::default();
@@ -956,80 +945,88 @@ impl WgpuRenderer {
         // 计算 uniform 数据
         let position = (0.5 * metrics.descent).abs();
         let underline_position = metrics.descent.abs() - metrics.underline_position.abs();
-        let viewport_height = size_info.height() - size_info.padding_y();
-        let padding_y = viewport_height
-            - (viewport_height / size_info.cell_height()).floor() * size_info.cell_height();
+        let padding_y = size_info.padding_y();
 
-        // 逆序绘制, 普通矩形在最上面
+        let rect_uniforms = RectUniforms {
+            cell_width: size_info.cell_width(),
+            cell_height: size_info.cell_height(),
+            padding_x: size_info.padding_x(),
+            padding_y,
+            underline_position,
+            underline_thickness: metrics.underline_thickness,
+            undercurl_position: position,
+            _pad: 0.0,
+        };
+        self.queue.write_buffer(
+            &self.rect_uniform_buffer,
+            0,
+            bytemuck::bytes_of(&rect_uniforms),
+        );
+
+        let mut all_vertices = Vec::with_capacity(rects.len().saturating_mul(6));
+        let mut ranges = Vec::new();
+        // 逆序绘制, 普通矩形在最上面.
         for kind_idx in (0..4).rev() {
             let vertices = &vertices_by_kind[kind_idx];
             if vertices.is_empty() {
                 continue;
             }
 
-            let rect_uniforms = RectUniforms {
-                cell_width: size_info.cell_width(),
-                cell_height: size_info.cell_height(),
-                padding_x: size_info.padding_x(),
-                padding_y,
-                underline_position,
-                underline_thickness: metrics.underline_thickness,
-                undercurl_position: position,
-                _pad: 0.0,
-            };
+            let start = all_vertices.len() as u32;
+            all_vertices.extend_from_slice(vertices);
+            let end = all_vertices.len() as u32;
+            ranges.push((kind_idx, start, end));
+        }
 
-            self.queue.write_buffer(
-                &self.rect_uniform_buffer,
-                0,
-                bytemuck::bytes_of(&rect_uniforms),
-            );
+        if ranges.is_empty() {
+            return;
+        }
 
-            // 如果顶点数超过 buffer 大小, 需要重新创建或分批
-            let vertex_data = bytemuck::cast_slice(vertices);
-            let needed_size = vertex_data.len() as u64;
-            if needed_size > self.rect_vertex_buffer.size() {
-                // 简单方案: 重建更大的 buffer
-                // 由于 self 是 &mut, 我们可以直接重建
-                self.rect_vertex_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("rect_vertex_buffer_resized"),
-                    size: needed_size,
-                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-            }
-            self.queue
-                .write_buffer(&self.rect_vertex_buffer, 0, vertex_data);
+        let vertex_data = bytemuck::cast_slice(&all_vertices);
+        let needed_size = vertex_data.len() as u64;
+        if needed_size > self.rect_vertex_buffer.size() {
+            let new_size = needed_size.next_power_of_two();
+            self.rect_vertex_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("rect_vertex_buffer_resized"),
+                size: new_size,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
+        self.queue
+            .write_buffer(&self.rect_vertex_buffer, 0, vertex_data);
 
-            {
-                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("rect_pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                rpass.set_pipeline(&self.rect_pipelines[kind_idx]);
-                rpass.set_viewport(
-                    size_info.padding_x(),
-                    size_info.padding_y(),
-                    size_info.width() - 2.0 * size_info.padding_x(),
-                    size_info.height() - 2.0 * size_info.padding_y(),
-                    0.0,
-                    1.0,
-                );
-                rpass.set_bind_group(0, &self.rect_uniform_bind_group, &[]);
-                rpass.set_vertex_buffer(0, self.rect_vertex_buffer.slice(..));
-                rpass.draw(0..vertices.len() as u32, 0..1);
-            }
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("rect_pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        let (viewport_x, viewport_y, viewport_width, viewport_height) =
+            Self::content_viewport(size_info);
+        rpass.set_viewport(
+            viewport_x,
+            viewport_y,
+            viewport_width,
+            viewport_height,
+            0.0,
+            1.0,
+        );
+        rpass.set_bind_group(0, &self.rect_uniform_bind_group, &[]);
+        rpass.set_vertex_buffer(0, self.rect_vertex_buffer.slice(..));
+        for (kind_idx, start, end) in ranges {
+            rpass.set_pipeline(&self.rect_pipelines[kind_idx]);
+            rpass.draw(start..end, 0..1);
         }
     }
 
@@ -1087,9 +1084,6 @@ impl WgpuRenderer {
         vertices.push(quad[3]);
         vertices.push(quad[1]);
     }
-
-    /// 调整渲染器大小（当前 viewport 由每帧 render pass 动态设置，此函数保留接口兼容）。
-    pub fn resize(&self, _size_info: &SizeInfo) {}
 
     /// 获取用于 glyph 加载的 loader api.
     pub fn loader_api(&mut self) -> WgpuLoaderApi<'_> {

@@ -52,7 +52,7 @@ impl std::error::Error for Error {
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Error::WindowCreation(err) => write!(f, "Error creating GL context; {err}"),
+            Error::WindowCreation(err) => write!(f, "Error creating window; {err}"),
             Error::Font(err) => err.fmt(f),
         }
     }
@@ -119,7 +119,7 @@ impl Window {
             .with_title(&identity.title)
             .with_theme(config.window.theme())
             .with_visible(false)
-            .with_transparent(true);
+            .with_transparent(config.window_opacity() < 1.);
 
         #[cfg(windows)]
         {
@@ -165,12 +165,6 @@ impl Window {
             is_x11,
             ime_inhibitor: Default::default(),
         })
-    }
-
-    #[inline]
-    #[allow(dead_code)]
-    pub fn raw_window_handle(&self) -> RawWindowHandle {
-        self.window.window_handle().unwrap().as_raw()
     }
 
     #[inline]

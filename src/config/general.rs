@@ -24,7 +24,6 @@ pub struct General {
     /// Offer IPC through a unix socket.
     #[cfg(unix)]
     #[serde(default = "default_true")]
-    #[allow(unused)]
     pub ipc_socket: bool,
 }
 

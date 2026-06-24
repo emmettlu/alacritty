@@ -1,7 +1,7 @@
 use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::result::Result as StdResult;
-use std::{env, fs, io};
+use std::{env, fs, io, process};
 
 use log::{error, info};
 use serde::Deserialize;
@@ -35,8 +35,6 @@ use crate::logging::LOG_TARGET_CONFIG;
 
 /// Maximum number of depth for the configuration file imports.
 pub const IMPORT_RECURSION_LIMIT: usize = 5;
-
-const HOME: &str = if cfg!(windows) { "APPDATA" } else { "HOME" };
 
 /// Result from config loading.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -96,6 +94,7 @@ impl From<TomlError> for Error {
 
 /// Load the configuration file.
 pub fn load(options: &mut Options) -> UiConfig {
+    let explicit_config = options.config_file.is_some();
     let config_path = options
         .config_file
         .clone()
@@ -105,17 +104,21 @@ pub fn load(options: &mut Options) -> UiConfig {
     //  - Config path + CLI overrides
     //  - CLI overrides
     //  - Default
-    let mut config = config_path
-        .as_ref()
-        .and_then(|config_path| load_from(config_path).ok())
-        .unwrap_or_else(|| {
-            let mut config = UiConfig::default();
-            match config_path {
-                Some(config_path) => config.config_paths.push(config_path),
-                None => info!(target: LOG_TARGET_CONFIG, "No config file found; using default"),
+    let mut config = match config_path.as_ref() {
+        Some(config_path) => match load_from(config_path) {
+            Ok(config) => config,
+            Err(_) if explicit_config => process::exit(1),
+            Err(_) => {
+                let mut config = UiConfig::default();
+                config.config_paths.push(config_path.clone());
+                config
             }
-            config
-        });
+        },
+        None => {
+            info!(target: LOG_TARGET_CONFIG, "No config file found; using default");
+            UiConfig::default()
+        }
+    };
 
     after_loading(&mut config, options);
 
@@ -275,7 +278,14 @@ pub fn normalize_import(base_config_path: &Path, import_path: impl Into<PathBuf>
 
     // Resolve paths relative to user's home directory.
     if let Ok(stripped) = import_path.strip_prefix("~/") {
-        import_path = home_dir().join(stripped);
+        match home_dir() {
+            Some(home) => import_path = home.join(stripped),
+            None => error!(
+                target: LOG_TARGET_CONFIG,
+                "Unable to resolve import path {:?}: home directory not found",
+                import_path
+            ),
+        }
     }
 
     if import_path.is_relative()
@@ -288,11 +298,8 @@ pub fn normalize_import(base_config_path: &Path, import_path: impl Into<PathBuf>
 }
 
 #[inline(always)]
-fn home_dir() -> PathBuf {
-    env::var(HOME)
-        .inspect_err(|error| error!(target: LOG_TARGET_CONFIG, "{error}"))
-        .unwrap()
-        .into()
+fn home_dir() -> Option<PathBuf> {
+    dirs::home_dir()
 }
 
 /// Get the location of the first found default config file paths

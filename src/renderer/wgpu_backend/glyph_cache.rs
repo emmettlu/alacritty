@@ -7,7 +7,7 @@ use crossfont::{
     Error as RasterizerError, FontDesc, FontKey, GlyphKey, Metrics, Rasterize, RasterizedGlyph,
     Rasterizer, Size, Slant, Style, Weight,
 };
-use log::{error, info};
+use log::{error, info, warn};
 use rustc_hash::FxBuildHasher;
 use unicode_width::UnicodeWidthChar;
 
@@ -150,7 +150,10 @@ impl GlyphCache {
             if desc == regular_desc {
                 regular
             } else {
-                rasterizer.load_font(&desc, size).unwrap_or(regular)
+                rasterizer.load_font(&desc, size).unwrap_or_else(|err| {
+                    warn!("Failed to load font {desc:?}: {err}; falling back to regular font");
+                    regular
+                })
             }
         };
 

@@ -111,6 +111,9 @@ impl Processor {
         #[cfg(windows)]
         let clipboard = Clipboard::new();
 
+        #[cfg(unix)]
+        let ipc_listener = Self::ipc_listener(&config, &cli_options);
+
         Processor {
             initial_window_options,
             initial_window_error: None,
@@ -123,7 +126,39 @@ impl Processor {
             #[cfg(unix)]
             global_ipc_options: Default::default(),
             #[cfg(unix)]
-            ipc_listener: IpcListener::new(&crate::ipc::socket_path()).ok(),
+            ipc_listener,
+        }
+    }
+
+    #[cfg(unix)]
+    fn ipc_listener(config: &UiConfig, cli_options: &CliOptions) -> Option<IpcListener> {
+        if !config.ipc_socket() && cli_options.socket.is_none() {
+            return None;
+        }
+
+        let path = cli_options
+            .socket
+            .clone()
+            .unwrap_or_else(crate::ipc::socket_path);
+        match IpcListener::new(&path) {
+            Ok(listener) => Some(listener),
+            Err(err) => {
+                warn!("Failed to create IPC socket at {}: {}", path.display(), err);
+                None
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn ipc_target_window_id(window_id: Option<i128>) -> Option<Option<WindowId>> {
+        match window_id {
+            None | Some(-1) => Some(None),
+            Some(window_id) => {
+                warn!(
+                    "Ignoring IPC request for unsupported window id {window_id}; only -1/global is supported"
+                );
+                None
+            }
         }
     }
 
@@ -154,6 +189,10 @@ impl Processor {
         // Override config with CLI/IPC options.
         let mut config_overrides = options.config_overrides();
         let mut config = self.config.clone();
+        #[cfg(unix)]
+        {
+            config = self.global_ipc_options.override_config_rc_immutable(config);
+        }
         config = config_overrides.override_config_rc(config);
 
         let window_context = WindowContext::additional(
@@ -217,20 +256,6 @@ impl ApplicationHandler<Event> for Processor {
             self.initial_window_error = Some(err);
             event_loop.exit();
             return;
-        }
-
-        // Start IPC listener after the first window is up (non-daemon case).
-        #[cfg(unix)]
-        if self.ipc_listener.is_none() {
-            let path = crate::ipc::socket_path();
-            match IpcListener::new(&path) {
-                Ok(listener) => {
-                    self.ipc_listener = Some(listener);
-                }
-                Err(err) => {
-                    log::warn!("Failed to create IPC socket at {}: {}", path.display(), err);
-                }
-            }
         }
 
         info!("Initialisation complete");
@@ -327,21 +352,16 @@ impl ApplicationHandler<Event> for Processor {
                 };
 
                 // Send JSON config to the socket.
-                if let Ok(mut s) = stream.try_clone() {
-                    ipc::send_reply(&mut s, SocketReply::GetConfig(config_json));
+                match stream.try_clone() {
+                    Ok(mut stream) => {
+                        ipc::send_reply(&mut stream, SocketReply::GetConfig(config_json))
+                    }
+                    Err(err) => debug!("Failed to clone IPC stream: {err}"),
                 }
             }
 
             // Create a new terminal window.
             (EventType::CreateWindow(options), _) => {
-                // XXX Ensure that no context is current when creating a new window,
-                // otherwise it may lock the backing buffer of the
-                // surface of current context when asking
-                // e.g. EGL on Wayland to create a new context.
-                for window_context in self.windows.values_mut() {
-                    window_context.display.make_not_current();
-                }
-
                 if self.windows.is_empty() {
                     // Handle initial window creation in daemon mode.
                     if let Err(err) = self.create_initial_window(event_loop, options) {
@@ -446,21 +466,33 @@ impl ApplicationHandler<Event> for Processor {
             while let Some((msg, maybe_stream)) = listener.try_recv() {
                 match msg {
                     SocketMessage::CreateWindow(options) => {
-                        let _ = self
+                        if let Err(err) = self
                             .proxy
-                            .send_event(Event::new(EventType::CreateWindow(options), None));
+                            .send_event(Event::new(EventType::CreateWindow(options), None))
+                        {
+                            debug!("Failed to send create-window event: {err:?}");
+                        }
                     }
                     SocketMessage::Config(cfg) => {
-                        let _ = self
-                            .proxy
-                            .send_event(Event::new(EventType::IpcConfig(cfg), None));
+                        if let Some(window_id) = Self::ipc_target_window_id(cfg.window_id) {
+                            if let Err(err) = self
+                                .proxy
+                                .send_event(Event::new(EventType::IpcConfig(cfg), window_id))
+                            {
+                                debug!("Failed to send IPC config event: {err:?}");
+                            }
+                        }
                     }
-                    SocketMessage::GetConfig(_get) => {
-                        if let Some(stream) = maybe_stream {
-                            let _ = self.proxy.send_event(Event::new(
+                    SocketMessage::GetConfig(get) => {
+                        if let Some(stream) = maybe_stream
+                            && let Some(window_id) = Self::ipc_target_window_id(get.window_id)
+                        {
+                            if let Err(err) = self.proxy.send_event(Event::new(
                                 EventType::IpcGetConfig(std::sync::Arc::new(stream)),
-                                None,
-                            ));
+                                window_id,
+                            )) {
+                                debug!("Failed to send IPC get-config event: {err:?}");
+                            }
                         }
                     }
                 }
@@ -855,10 +887,12 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
     }
 
     fn create_new_window(&mut self) {
-        let _ = self.event_proxy.send_event(Event::new(
+        if let Err(err) = self.event_proxy.send_event(Event::new(
             EventType::CreateWindow(WindowOptions::default()),
             None,
-        ));
+        )) {
+            debug!("Failed to send create-window event: {err:?}");
+        }
     }
 
     fn spawn_daemon<I, S>(&self, program: &str, args: I)
@@ -2076,14 +2110,19 @@ impl EventProxy {
 
     /// Send an event to the event loop.
     pub fn send_event(&self, event: EventType) {
-        let _ = self.proxy.send_event(Event::new(event, self.window_id));
+        if let Err(err) = self.proxy.send_event(Event::new(event, self.window_id)) {
+            debug!("Failed to send event: {err:?}");
+        }
     }
 }
 
 impl EventListener for EventProxy {
     fn send_event(&self, event: TerminalEvent) {
-        let _ = self
+        if let Err(err) = self
             .proxy
-            .send_event(Event::new(event.into(), self.window_id));
+            .send_event(Event::new(event.into(), self.window_id))
+        {
+            debug!("Failed to send terminal event: {err:?}");
+        }
     }
 }

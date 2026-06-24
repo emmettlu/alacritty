@@ -33,7 +33,7 @@ pub fn linear_to_srgb_byte(c: f32) -> u8 {
     } else {
         1.055 * c.powf(1.0 / 2.4) - 0.055
     };
-    (v * 255.0 + 0.5) as u8
+    (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
 }
 
 #[derive(Copy, Clone)]

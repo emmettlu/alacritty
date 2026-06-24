@@ -97,7 +97,10 @@ pub trait EventedPty: EventedReadWrite {
 /// Setup environment variables.
 pub fn setup_env() {
     // Keep terminal type stable on Windows-only builds.
-    unsafe { env::set_var("TERM", "xterm-256color") };
+    #[cfg(windows)]
+    unsafe {
+        env::set_var("TERM", "xterm-256color")
+    };
 
     // Advertise 24-bit color support.
     unsafe { env::set_var("COLORTERM", "truecolor") };

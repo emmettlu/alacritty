@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
-use log::info;
+use log::{error, info};
 use serde_json as json;
 use winit::event::{Event as WinitEvent, Modifiers, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
@@ -446,25 +446,36 @@ impl WindowContext {
         grid.initialize_all();
         grid.truncate();
 
-        let serialized_grid = json::to_string(&grid).expect("serialize grid");
+        let serialized_grid = match json::to_string(&grid) {
+            Ok(grid) => grid,
+            Err(err) => {
+                error!("Failed to serialize ref-test grid: {err}");
+                return;
+            }
+        };
 
         let size_info = &self.display.size_info;
         let size = TermSize::new(size_info.columns(), size_info.screen_lines());
-        let serialized_size = json::to_string(&size).expect("serialize size");
+        let serialized_size = match json::to_string(&size) {
+            Ok(size) => size,
+            Err(err) => {
+                error!("Failed to serialize ref-test size: {err}");
+                return;
+            }
+        };
 
         let serialized_config = format!("{{\"history_size\":{}}}", grid.history_size());
 
-        File::create("./grid.json")
-            .and_then(|mut f| f.write_all(serialized_grid.as_bytes()))
-            .expect("write grid.json");
-
-        File::create("./size.json")
-            .and_then(|mut f| f.write_all(serialized_size.as_bytes()))
-            .expect("write size.json");
-
-        File::create("./config.json")
-            .and_then(|mut f| f.write_all(serialized_config.as_bytes()))
-            .expect("write config.json");
+        for (path, contents) in [
+            ("./grid.json", serialized_grid.as_str()),
+            ("./size.json", serialized_size.as_str()),
+            ("./config.json", serialized_config.as_str()),
+        ] {
+            if let Err(err) = File::create(path).and_then(|mut f| f.write_all(contents.as_bytes()))
+            {
+                error!("Failed to write {path}: {err}");
+            }
+        }
     }
 
     /// Submit the pending changes to the `Display`.

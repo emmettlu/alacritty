@@ -149,8 +149,18 @@ where
             };
 
             // Write a copy of the bytes to the ref test file.
-            if let Some(writer) = &mut writer {
-                writer.write_all(&buf[..unprocessed]).unwrap();
+            let write_failed =
+                writer
+                    .as_mut()
+                    .is_some_and(|writer| match writer.write_all(&buf[..unprocessed]) {
+                        Ok(()) => false,
+                        Err(err) => {
+                            error!("Failed to write ref-test recording: {err}");
+                            true
+                        }
+                    });
+            if write_failed {
+                writer = None;
             }
 
             // Parse the incoming bytes.
@@ -222,7 +232,13 @@ where
             let mut events = Events::with_capacity(NonZeroUsize::new(1024).unwrap());
 
             let mut pipe = if self.ref_test {
-                Some(File::create("./alacritty.recording").expect("create alacritty recording"))
+                match File::create("./alacritty.recording") {
+                    Ok(file) => Some(file),
+                    Err(err) => {
+                        error!("Failed to create alacritty recording: {err}");
+                        None
+                    }
+                }
             } else {
                 None
             };

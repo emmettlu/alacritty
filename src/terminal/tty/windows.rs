@@ -168,7 +168,11 @@ fn cmdline(config: &Options) -> String {
     let shell = config.shell.as_ref().unwrap_or(&default_shell);
 
     let mut cmd = String::new();
-    cmd.push_str(&shell.program);
+    if config.escape_args {
+        push_escaped_arg(&mut cmd, &shell.program);
+    } else {
+        cmd.push_str(&shell.program);
+    }
 
     for arg in &shell.args {
         cmd.push(' ');

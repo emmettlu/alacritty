@@ -4,6 +4,7 @@
 use std::borrow::Cow;
 
 use crossfont::{BitmapBuffer, RasterizedGlyph};
+use log::warn;
 
 use super::glyph_cache::Glyph;
 
@@ -11,6 +12,7 @@ use super::glyph_cache::Glyph;
 ///
 /// 初始 atlas 用 512x512 降低启动显存占用, 后续空间不足会自动创建新的 atlas.
 pub const ATLAS_SIZE: u32 = 512;
+const GLYPH_PADDING: u32 = 1;
 
 /// 管理单个纹理 atlas.
 ///
@@ -108,7 +110,9 @@ impl Atlas {
         let glyph_width = glyph.width as u32;
         let glyph_height = glyph.height as u32;
 
-        if glyph_width > self.width || glyph_height > self.height {
+        let padded_width = glyph_width.saturating_add(GLYPH_PADDING);
+        let padded_height = glyph_height.saturating_add(GLYPH_PADDING);
+        if padded_width > self.width || padded_height > self.height {
             return Err(AtlasInsertError::GlyphTooLarge);
         }
 
@@ -178,10 +182,9 @@ impl Atlas {
         }
 
         // 更新 Atlas 状态.
-        self.row_extent = offset_x + width;
-        if height > self.row_tallest {
-            self.row_tallest = height;
-        }
+        let padding = u32::from(width > 0 || height > 0) * GLYPH_PADDING;
+        self.row_extent = offset_x + width + padding;
+        self.row_tallest = self.row_tallest.max(height + padding);
 
         // 生成 UV 坐标.
         let uv_bot = offset_y as f32 / self.height as f32;
@@ -205,16 +208,27 @@ impl Atlas {
 
     /// 检查当前行是否有空间放置指定字形.
     pub fn room_in_row(&self, raw: &RasterizedGlyph) -> bool {
-        let next_extent = self.row_extent + raw.width as u32;
+        let Some(remaining_height) = self.height.checked_sub(self.row_baseline) else {
+            return false;
+        };
+        let padding = u32::from(raw.width > 0 || raw.height > 0) * GLYPH_PADDING;
+        let next_extent = self
+            .row_extent
+            .saturating_add(raw.width as u32)
+            .saturating_add(padding);
         let enough_width = next_extent <= self.width;
-        let enough_height = (raw.height as u32) < (self.height - self.row_baseline);
+        let enough_height = (raw.height as u32).saturating_add(padding) <= remaining_height;
 
         enough_width && enough_height
     }
 
     /// 标记当前行已满, 准备写入下一行.
     pub fn advance_row(&mut self) -> Result<(), AtlasInsertError> {
-        let advance_to = self.row_baseline + self.row_tallest;
+        if self.row_tallest == 0 {
+            return Err(AtlasInsertError::Full);
+        }
+
+        let advance_to = self.row_baseline.saturating_add(self.row_tallest);
         if advance_to >= self.height {
             return Err(AtlasInsertError::Full);
         }
@@ -237,31 +251,37 @@ impl Atlas {
         current_atlas: &mut usize,
         rasterized: &RasterizedGlyph,
     ) -> Glyph {
-        match atlas[*current_atlas].insert(queue, rasterized) {
-            Ok(mut glyph) => {
-                glyph.atlas_index = *current_atlas;
-                glyph
-            }
-            Err(AtlasInsertError::Full) => {
-                *current_atlas += 1;
-                if *current_atlas == atlas.len() {
-                    let new = Atlas::new(device, ATLAS_SIZE);
-                    atlas.push(new);
+        loop {
+            match atlas[*current_atlas].insert(queue, rasterized) {
+                Ok(mut glyph) => {
+                    glyph.atlas_index = *current_atlas;
+                    return glyph;
                 }
-                Atlas::load_glyph(device, queue, atlas, current_atlas, rasterized)
+                Err(AtlasInsertError::Full) => {
+                    *current_atlas += 1;
+                    if *current_atlas == atlas.len() {
+                        atlas.push(Atlas::new(device, ATLAS_SIZE));
+                    }
+                }
+                Err(AtlasInsertError::GlyphTooLarge) => {
+                    warn!(
+                        "Glyph {}x{} is too large for {}x{} atlas; rendering empty glyph",
+                        rasterized.width, rasterized.height, ATLAS_SIZE, ATLAS_SIZE
+                    );
+                    return Glyph {
+                        atlas_index: *current_atlas,
+                        multicolor: false,
+                        top: 0,
+                        left: 0,
+                        width: 0,
+                        height: 0,
+                        uv_bot: 0.,
+                        uv_left: 0.,
+                        uv_width: 0.,
+                        uv_height: 0.,
+                    };
+                }
             }
-            Err(AtlasInsertError::GlyphTooLarge) => Glyph {
-                atlas_index: *current_atlas,
-                multicolor: false,
-                top: 0,
-                left: 0,
-                width: 0,
-                height: 0,
-                uv_bot: 0.,
-                uv_left: 0.,
-                uv_width: 0.,
-                uv_height: 0.,
-            },
         }
     }
 

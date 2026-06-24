@@ -115,8 +115,8 @@ impl BlockingPipe {
         let mut state = self.state.lock().unwrap();
         let len = buf.len().min(state.buffer.len());
 
-        for byte in buf.iter_mut().take(len) {
-            *byte = state.buffer.pop_front().unwrap();
+        for (dst, byte) in buf.iter_mut().zip(state.buffer.drain(..len)) {
+            *dst = byte;
         }
 
         if len > 0 {

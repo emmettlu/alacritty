@@ -3,14 +3,11 @@
 
 use std::cmp;
 use std::fmt::{self, Formatter};
-use std::future::Future;
 use std::mem;
 use std::num::NonZeroU32;
-use std::pin::Pin;
-use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 use std::time::{Duration, Instant};
 
-use log::{debug, info};
+use log::{debug, info, warn};
 use std::sync::MutexGuard;
 use winit::dpi::PhysicalSize;
 use winit::keyboard::ModifiersState;
@@ -160,7 +157,7 @@ impl From<SizeInfo<f32>> for SizeInfo<u32> {
             padding_x: size_info.padding_x as u32,
             padding_y: size_info.padding_y as u32,
             screen_lines: size_info.screen_lines,
-            columns: size_info.screen_lines,
+            columns: size_info.columns,
         }
     }
 }
@@ -322,6 +319,10 @@ impl DisplayUpdate {
 
 /// The display wraps a window, font rasterizer, and GPU renderer.
 pub struct Display {
+    // wgpu surface 通过 native window 创建并持有 unsafe static lifetime.
+    // 字段放在 `window` 前面, 确保 drop 时 surface 先释放.
+    wgpu_surface: wgpu::Surface<'static>,
+
     pub window: Window,
 
     pub size_info: SizeInfo,
@@ -370,7 +371,6 @@ pub struct Display {
 
     // --- wgpu 渲染器 ---
     wgpu_renderer: WgpuRenderer,
-    wgpu_surface: wgpu::Surface<'static>,
     wgpu_surface_config: wgpu::SurfaceConfiguration,
 
     glyph_cache: GlyphCache,
@@ -414,6 +414,8 @@ impl Display {
         }
         let instance = wgpu::Instance::new(instance_descriptor);
 
+        // SAFETY: surface 在 `Display` 中声明于 `window` 前, 会先于它引用的 native window
+        // 释放. 所有渲染都发生在 event-loop 线程, 且只在 window 存活期间进行.
         let wgpu_surface = unsafe {
             let target = wgpu::SurfaceTargetUnsafe::from_display_and_window(
                 window.winit_window(),
@@ -448,7 +450,12 @@ impl Display {
 
         let viewport_size = window.inner_size();
         let caps = wgpu_surface.get_capabilities(&adapter);
-        let surface_format = caps.formats[0];
+        let surface_format = caps
+            .formats
+            .iter()
+            .copied()
+            .find(|format| format.is_srgb())
+            .unwrap_or(caps.formats[0]);
         info!("wgpu surface format: {:?}", surface_format);
 
         let alpha_mode = if config.window_opacity() < 1.0 {
@@ -472,6 +479,14 @@ impl Display {
         };
         info!("wgpu alpha mode: {:?}", alpha_mode);
 
+        let present_mode = caps
+            .present_modes
+            .iter()
+            .copied()
+            .find(|mode| *mode == wgpu::PresentMode::AutoVsync)
+            .unwrap_or(caps.present_modes[0]);
+        info!("wgpu present mode: {:?}", present_mode);
+
         let wgpu_surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
@@ -480,7 +495,7 @@ impl Display {
             width: viewport_size.width.max(1),
             height: viewport_size.height.max(1),
             desired_maximum_frame_latency: 1,
-            present_mode: wgpu::PresentMode::AutoNoVsync,
+            present_mode,
         };
         wgpu_surface.configure(&device, &wgpu_surface_config);
 
@@ -563,13 +578,13 @@ impl Display {
             colors: List::from(&config.colors),
             frame_timer: FrameTimer::new(),
             damage_tracker,
+            wgpu_surface,
             glyph_cache,
             hint_state,
             size_info,
             font_size,
             window,
             wgpu_renderer,
-            wgpu_surface,
             wgpu_surface_config,
             pending_renderer_update: Default::default(),
             vi_highlighted_hint_age: Default::default(),
@@ -584,10 +599,6 @@ impl Display {
         })
     }
 
-    pub fn make_not_current(&mut self) {
-        // wgpu 不需要此操作.
-    }
-
     /// Update font size and cell dimensions.
     ///
     /// This will return a tuple of the cell width and height.
@@ -596,7 +607,9 @@ impl Display {
         config: &UiConfig,
         font: &Font,
     ) -> (f32, f32) {
-        let _ = glyph_cache.update_font_size(font);
+        if let Err(err) = glyph_cache.update_font_size(font) {
+            warn!("Failed to update font size: {err}");
+        }
 
         // Compute new cell sizes.
         compute_cell_size(config, &glyph_cache.font_metrics())
@@ -609,9 +622,7 @@ impl Display {
         cache.reset_glyph_cache(&mut loader);
     }
 
-    // XXX: this function must not call to any `OpenGL` related tasks. Renderer updates are
-    // performed in [`Self::process_renderer_update`] right before drawing.
-    //
+    // 渲染器更新会在实际绘制前的 [`Self::process_renderer_update`] 中统一处理.
     /// Process update events.
     pub fn handle_update<T>(
         &mut self,
@@ -731,8 +742,6 @@ impl Display {
             self.reset_glyph_cache();
         }
 
-        self.wgpu_renderer.resize(&self.size_info);
-
         info!(
             "Padding: {} x {}",
             self.size_info.padding_x(),
@@ -779,8 +788,9 @@ impl Display {
         search_state: &mut SearchState,
     ) {
         // 收集可渲染内容.
+        let cell_capacity = self.size_info.columns() * self.size_info.screen_lines();
         let mut content = RenderableContent::new(config, self, &terminal, search_state);
-        let mut grid_cells = Vec::new();
+        let mut grid_cells = Vec::with_capacity(cell_capacity);
         for cell in &mut content {
             grid_cells.push(cell);
         }
@@ -841,10 +851,7 @@ impl Display {
         // 获取 surface texture.
         let output = match self.wgpu_surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(output) => output,
-            wgpu::CurrentSurfaceTexture::Suboptimal(output) => {
-                self.sync_wgpu_surface_size();
-                output
-            }
+            wgpu::CurrentSurfaceTexture::Suboptimal(output) => output,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 // 重新配置 surface.
                 self.sync_wgpu_surface_size();
@@ -1230,6 +1237,11 @@ impl Display {
         .collect();
 
         let visible_len = visible_text.chars().count();
+        if visible_len == 0 {
+            self.window.update_ime_position(point, &self.size_info);
+            return;
+        }
+
         let end = cmp::min(point.column.0 + visible_len, num_cols);
         let start = end.saturating_sub(visible_len);
         let start = Point::new(point.line, Column(start));
@@ -1662,30 +1674,9 @@ impl FrameTimer {
 
 fn block_on<F>(future: F) -> F::Output
 where
-    F: Future,
+    F: std::future::Future,
 {
-    let waker = noop_waker();
-    let mut context = Context::from_waker(&waker);
-    let mut future = Box::pin(future);
-
-    loop {
-        match Pin::as_mut(&mut future).poll(&mut context) {
-            Poll::Ready(output) => return output,
-            Poll::Pending => std::thread::yield_now(),
-        }
-    }
-}
-
-fn noop_waker() -> Waker {
-    unsafe fn clone(_: *const ()) -> RawWaker {
-        RawWaker::new(std::ptr::null(), &VTABLE)
-    }
-    unsafe fn wake(_: *const ()) {}
-    unsafe fn wake_by_ref(_: *const ()) {}
-    unsafe fn drop(_: *const ()) {}
-
-    static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, drop);
-    unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) }
+    pollster::block_on(future)
 }
 
 /// Calculate the cell dimensions based on font metrics.
