@@ -90,3 +90,12 @@ windows-sys = { version = "0", features = [
   "Win32_System_WindowsProgramming",
 ] }
 winit = { version = "0", default-features = false, features = ["rwh_06", "serde"] }
+
+
+[profile.release]
+codegen-units = 1
+debug = false
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

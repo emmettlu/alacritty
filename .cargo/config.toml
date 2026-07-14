@@ -1,16 +1,8 @@
 [build]
 rustflags = ["-C", "target-cpu=znver3"]
 
-[target.x86_64-pc-windows-msvc]
+[target."cfg(windows)"]
 rustflags = ["--cfg", "windows_slim_errors"]
 
-[target.x86_64-unknown-linux-gnu]
+[target."cfg(unix)"]
 rustflags = []
-
-[profile.release]
-codegen-units = 1
-debug = false
-lto = true
-opt-level = "z"
-panic = "abort"
-strip = true
