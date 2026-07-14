@@ -26,8 +26,8 @@ use atlas::{Glyph, GlyphAtlas};
 
 // 着色器源码
 
-const TEXT_SHADER: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/wgsl/text.wgsl"));
-const RECT_SHADER: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/wgsl/rect.wgsl"));
+const TEXT_SHADER: &str = include_str!(concat!(env!("OUT_DIR"), "/text.wgsl"));
+const RECT_SHADER: &str = include_str!(concat!(env!("OUT_DIR"), "/rect.wgsl"));
 
 /// 文本实例数据, 与 WGSL 中的 VertexInput 对应.
 #[repr(C)]
