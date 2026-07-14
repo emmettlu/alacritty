@@ -829,16 +829,6 @@ impl Display {
         true
     }
 
-    /// Update to a new configuration.
-    #[cfg(unix)]
-    pub fn update_config(&mut self, config: &UiConfig) {
-        self.damage_tracker.debug = config.debug.highlight_damage;
-        self.visual_bell.update_config(&config.bell);
-        self.colors = List::from(&config.colors);
-        self.wgpu_renderer
-            .update_surface_opacity(config.window_opacity());
-    }
-
     // ==========================================================================
     // 辅助绘制方法
     // ==========================================================================

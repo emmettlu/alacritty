@@ -15,7 +15,7 @@ use crate::terminal::tty;
 mod cli;
 mod clipboard;
 mod config;
-mod config_compat;
+
 mod daemon;
 mod display;
 mod event;

@@ -37,8 +37,6 @@ use crate::terminal::term::search::{Match, RegexSearch};
 use crate::terminal::term::{self, ClipboardType, Term, TermMode};
 use crate::terminal::vte::ansi::NamedColor;
 
-#[cfg(unix)]
-use crate::cli::{IpcConfig, ParsedOptions};
 use crate::cli::{Options as CliOptions, WindowOptions};
 use crate::clipboard::Clipboard;
 use crate::config::UiConfig;
@@ -84,8 +82,7 @@ pub struct Processor {
     initial_window_error: Option<Box<dyn Error>>,
     windows: FxHashMap<WindowId, WindowContext>,
     proxy: EventLoopProxy<Event>,
-    #[cfg(unix)]
-    global_ipc_options: ParsedOptions,
+
     #[cfg(unix)]
     ipc_listener: Option<IpcListener>,
     cli_options: CliOptions,
@@ -123,8 +120,6 @@ impl Processor {
             config: Rc::new(config),
             clipboard,
             windows: Default::default(),
-            #[cfg(unix)]
-            global_ipc_options: Default::default(),
             #[cfg(unix)]
             ipc_listener,
         }
@@ -186,21 +181,11 @@ impl Processor {
         event_loop: &ActiveEventLoop,
         options: WindowOptions,
     ) -> Result<(), Box<dyn Error>> {
-        // Override config with CLI/IPC options.
-        let mut config_overrides = options.config_overrides();
-        let mut config = self.config.clone();
-        #[cfg(unix)]
-        {
-            config = self.global_ipc_options.override_config_rc_immutable(config);
-        }
-        config = config_overrides.override_config_rc(config);
-
         let window_context = WindowContext::additional(
             event_loop,
             self.proxy.clone(),
-            config,
+            self.config.clone(),
             options,
-            config_overrides,
         )?;
 
         self.windows.insert(window_context.id(), window_context);
@@ -304,42 +289,13 @@ impl ApplicationHandler<Event> for Processor {
 
         // Handle events which don't mandate the WindowId.
         match (event.payload, event.window_id.as_ref()) {
-            // Process IPC config update.
-            #[cfg(unix)]
-            (EventType::IpcConfig(ipc_config), window_id) => {
-                let options = ParsedOptions::from_options(&ipc_config.options);
-
-                // Override IPC config for each window with matching ID.
-                for (_, window_context) in self
-                    .windows
-                    .iter_mut()
-                    .filter(|(id, _)| window_id.is_none() || window_id == Some(*id))
-                {
-                    if ipc_config.reset {
-                        window_context.reset_window_config(self.config.clone());
-                    } else {
-                        window_context.add_window_config(self.config.clone(), &options);
-                    }
-                }
-
-                // Persist global options for future windows.
-                if window_id.is_none() {
-                    if ipc_config.reset {
-                        self.global_ipc_options.clear();
-                    } else {
-                        self.global_ipc_options.append(&options);
-                    }
-                }
-            }
             // Process IPC config requests.
             #[cfg(unix)]
             (EventType::IpcGetConfig(stream), window_id) => {
                 // Get the config for the requested window ID.
                 let config = match self.windows.iter().find(|(id, _)| window_id == Some(*id)) {
                     Some((_, window_context)) => window_context.config(),
-                    None => self
-                        .global_ipc_options
-                        .override_config_rc(self.config.clone()),
+                    None => self.config.clone(),
                 };
 
                 // Convert config to JSON format.
@@ -474,16 +430,7 @@ impl ApplicationHandler<Event> for Processor {
                             debug!("Failed to send create-window event: {err:?}");
                         }
                     }
-                    SocketMessage::Config(cfg) => {
-                        if let Some(window_id) = Self::ipc_target_window_id(cfg.window_id) {
-                            if let Err(err) = self
-                                .proxy
-                                .send_event(Event::new(EventType::IpcConfig(cfg), window_id))
-                            {
-                                debug!("Failed to send IPC config event: {err:?}");
-                            }
-                        }
-                    }
+
                     SocketMessage::GetConfig(get) => {
                         if let Some(stream) = maybe_stream
                             && let Some(window_id) = Self::ipc_target_window_id(get.window_id)
@@ -551,8 +498,7 @@ pub enum EventType {
     Message(Message),
     Scroll(Scroll),
     CreateWindow(WindowOptions),
-    #[cfg(unix)]
-    IpcConfig(IpcConfig),
+
     #[cfg(unix)]
     IpcGetConfig(Arc<UnixStream>),
     BlinkCursor,
@@ -1967,7 +1913,7 @@ impl input::Processor<EventProxy, ActionContext<'_, Notifier, EventProxy>> {
                     TerminalEvent::Exit | TerminalEvent::ChildExit(_) | TerminalEvent::Wakeup => (),
                 },
                 #[cfg(unix)]
-                EventType::IpcConfig(_) | EventType::IpcGetConfig(..) => (),
+                EventType::IpcGetConfig(..) => (),
                 EventType::Message(_) | EventType::CreateWindow(_) | EventType::Frame => (),
             },
             WinitEvent::WindowEvent { event, .. } => {

@@ -5,8 +5,7 @@ use std::error::Error;
 use std::fs::File;
 #[cfg(feature = "ref-tests")]
 use std::io::Write;
-#[cfg(unix)]
-use std::mem;
+
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
@@ -30,7 +29,7 @@ use crate::terminal::term::TermSize;
 use crate::terminal::term::{Term, TermMode};
 use crate::terminal::tty;
 
-use crate::cli::{ParsedOptions, WindowOptions};
+use crate::cli::WindowOptions;
 use crate::clipboard::Clipboard;
 use crate::config::UiConfig;
 use crate::display::Display;
@@ -59,7 +58,6 @@ pub struct WindowContext {
     touch: TouchPurpose,
     occluded: bool,
     preserve_title: bool,
-    window_config: ParsedOptions,
     config: Rc<UiConfig>,
 }
 
@@ -87,7 +85,6 @@ impl WindowContext {
         proxy: EventLoopProxy<Event>,
         config: Rc<UiConfig>,
         mut options: WindowOptions,
-        config_overrides: ParsedOptions,
     ) -> Result<Self, Box<dyn Error>> {
         let mut identity = config.window.identity.clone();
         options
@@ -98,14 +95,7 @@ impl WindowContext {
 
         let display = Display::new(window, &config)?;
 
-        let mut window_context = Self::new(display, config, options, proxy)?;
-
-        // 在启动时设置配置覆盖.
-        //
-        // 这些已经应用到 `config`, 所以不需要更新.
-        window_context.window_config = config_overrides;
-
-        Ok(window_context)
+        Self::new(display, config, options, proxy)
     }
 
     /// Create a new terminal window context.
@@ -191,7 +181,6 @@ impl WindowContext {
             prev_bell_cmd: Default::default(),
             inline_search_state: Default::default(),
             message_buffer: Default::default(),
-            window_config: Default::default(),
             search_state: Default::default(),
             event_queue: Default::default(),
             modifiers: Default::default(),
@@ -200,83 +189,6 @@ impl WindowContext {
             touch: Default::default(),
             dirty: Default::default(),
         })
-    }
-
-    /// Update the terminal window to the latest config.
-    #[cfg(unix)]
-    pub fn update_config(&mut self, new_config: Rc<UiConfig>) {
-        let old_config = mem::replace(&mut self.config, new_config);
-
-        // Apply ipc config if there are overrides.
-        self.config = self.window_config.override_config_rc(self.config.clone());
-
-        self.display.update_config(&self.config);
-        self.terminal.lock().set_options(self.config.term_options());
-
-        if old_config.font != self.config.font {
-            let scale_factor = self.display.window.scale_factor as f32;
-            // Do not update font size if it has been changed at runtime.
-            if self.display.font_size == old_config.font.size().scale(scale_factor) {
-                self.display.font_size = self.config.font.size().scale(scale_factor);
-            }
-
-            let font = self.config.font.clone().with_size(self.display.font_size);
-            self.display.pending_update.set_font(font);
-        }
-
-        // Always reload the theme to account for auto-theme switching.
-        self.display.window.set_theme(self.config.window.theme());
-
-        // Update display if either padding options or resize increments were changed.
-        let window_config = &old_config.window;
-        if window_config.padding(1.) != self.config.window.padding(1.)
-            || window_config.dynamic_padding != self.config.window.dynamic_padding
-            || window_config.resize_increments != self.config.window.resize_increments
-        {
-            self.display.pending_update.dirty = true;
-        }
-
-        // Update title on config changes according to the following table.
-        //
-        // │cli │ dynamic_title │ current_title == old_config ││ set_title │
-        // │ Y  │       _       │              _              ││     N     │
-        // │ N  │       Y       │              Y              ││     Y     │
-        // │ N  │       Y       │              N              ││     N     │
-        // │ N  │       N       │              _              ││     Y     │
-        if !self.preserve_title
-            && (!self.config.window.dynamic_title
-                || self.display.window.title() == old_config.window.identity.title)
-        {
-            self.display
-                .window
-                .set_title(self.config.window.identity.title.clone());
-        }
-
-        let opaque = self.config.window_opacity() >= 1.;
-
-        // Disable shadows for transparent windows on macOS.
-        #[cfg(target_os = "macos")]
-        self.display.window.set_has_shadow(opaque);
-
-        #[cfg(target_os = "macos")]
-        self.display
-            .window
-            .set_option_as_alt(self.config.window.option_as_alt());
-
-        // Change opacity and blur state.
-        self.display.window.set_transparent(!opaque);
-        self.display.window.set_blur(self.config.window.blur);
-
-        // Update hint keys.
-        self.display
-            .hint_state
-            .update_alphabet(self.config.hints.alphabet());
-
-        // Update cursor blinking.
-        let event = Event::new(TerminalEvent::CursorBlinkingChange.into(), None);
-        self.event_queue.push(event.into());
-
-        self.dirty = true;
     }
 
     /// Draw the window.
@@ -423,22 +335,7 @@ impl WindowContext {
     /// Get the config for this window context.
     #[cfg(unix)]
     pub fn config(&self) -> Rc<UiConfig> {
-        self.window_config
-            .override_config_rc_immutable(self.config.clone())
-    }
-
-    /// Reset window config to default.
-    #[cfg(unix)]
-    pub fn reset_window_config(&mut self, config: Rc<UiConfig>) {
-        self.window_config = ParsedOptions::default();
-        self.update_config(config);
-    }
-
-    /// Add window-specific configuration.
-    #[cfg(unix)]
-    pub fn add_window_config(&mut self, config: Rc<UiConfig>, options: &ParsedOptions) {
-        self.window_config.merge(options);
-        self.update_config(config);
+        self.config.clone()
     }
 
     /// Write the ref test results to the disk.

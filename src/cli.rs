@@ -1,23 +1,18 @@
 use std::cmp::max;
 use std::collections::HashMap;
 use std::fmt;
-use std::ops::{Deref, DerefMut};
-use std::path::PathBuf;
-use std::process;
-use std::rc::Rc;
 
-use crate::config_compat::SerdeReplace;
 use log::{LevelFilter, error};
 use nanoargs::{ArgBuilder, ArgParser, Flag, Opt, ParseError};
 use serde::{Deserialize, Serialize};
-use toml::Value;
+use std::path::PathBuf;
+use std::process;
 
 use crate::terminal::tty::Options as PtyOptions;
 
 use crate::config::UiConfig;
 use crate::config::ui_config::Program;
 use crate::config::window::{Class, Identity};
-use crate::logging::LOG_TARGET_IPC_CONFIG;
 
 /// CLI options for the main Alacritty executable.
 #[derive(Default, Debug)]
@@ -49,9 +44,6 @@ pub struct Options {
     /// IPC socket path.
     #[cfg(unix)]
     pub socket: Option<PathBuf>,
-
-    /// CLI options for config overrides.
-    pub config_options: ParsedOptions,
 
     /// Options which can be passed when creating a new window.
     pub window_options: WindowOptions,
@@ -124,13 +116,6 @@ impl Options {
                     .placeholder("GENERAL[,INSTANCE]")
                     .desc("Define the window class"),
             )
-            .option(
-                Opt::new("option")
-                    .short('o')
-                    .placeholder("KEY=VALUE")
-                    .desc("Override configuration options")
-                    .multi(),
-            )
             .conflict("verbosity", &["quiet", "verbose"]);
 
         #[cfg(feature = "ref-tests")]
@@ -158,7 +143,6 @@ impl Options {
     fn parse(mut args: Vec<String>) -> Result<Self, CliError> {
         let command = split_command(&mut args)?;
         normalize_title_alias(&mut args);
-        normalize_config_options(&mut args);
         let quiet = count_verbosity(&args, 'q', "--quiet");
         let verbose = count_verbosity(&args, 'v', "--verbose");
         let parsed = Self::parser().parse(args).map_err(CliError::Parse)?;
@@ -181,9 +165,7 @@ impl Options {
             window_identity,
             #[cfg(target_os = "macos")]
             window_tabbing_id: None,
-            option: parsed.get_option_values("option").to_vec(),
         };
-        let config_options = window_options.config_overrides();
 
         Ok(Self {
             print_events: parsed.get_flag("print-events"),
@@ -198,7 +180,6 @@ impl Options {
             daemon: parsed.get_flag("daemon"),
             #[cfg(unix)]
             socket: parsed.get_option("socket").map(PathBuf::from),
-            config_options,
             window_options,
         })
     }
@@ -223,8 +204,6 @@ impl Options {
         if config.debug.print_events {
             config.debug.log_level = max(config.debug.log_level, LevelFilter::Info);
         }
-
-        self.config_options.override_config(config);
     }
 
     pub fn daemon(&self) -> bool {
@@ -328,28 +307,6 @@ fn normalize_title_alias(args: &mut [String]) {
             *arg = format!("-T={title}");
         } else if let Some(title) = arg.strip_prefix("-t").filter(|title| !title.is_empty()) {
             *arg = format!("-T{title}");
-        }
-    }
-}
-
-/// Expand legacy `-o value value` syntax into repeated nanoargs options.
-fn normalize_config_options(args: &mut Vec<String>) {
-    let mut index = 0;
-    while index < args.len() {
-        let is_option = matches!(args[index].as_str(), "-o" | "--option")
-            || args[index].starts_with("-o=")
-            || args[index].starts_with("--option=")
-            || (args[index].starts_with("-o") && args[index].len() > 2);
-        if !is_option {
-            index += 1;
-            continue;
-        }
-
-        // An option without an attached value consumes the next token itself.
-        index += usize::from(matches!(args[index].as_str(), "-o" | "--option")) + 1;
-        while index < args.len() && !args[index].starts_with('-') {
-            args.insert(index, String::from("--option"));
-            index += 2;
         }
     }
 }
@@ -490,115 +447,6 @@ pub struct WindowOptions {
     #[cfg(target_os = "macos")]
     #[serde(default)]
     pub window_tabbing_id: Option<String>,
-
-    /// Override configuration file options [example: 'cursor.style=\"Beam\"'].
-    option: Vec<String>,
-}
-
-impl WindowOptions {
-    /// Get the parsed set of CLI config overrides.
-    pub fn config_overrides(&self) -> ParsedOptions {
-        ParsedOptions::from_options(&self.option)
-    }
-}
-
-/// Parsed CLI config overrides.
-#[derive(Debug, Default)]
-pub struct ParsedOptions {
-    config_options: Vec<(String, Value)>,
-}
-
-impl ParsedOptions {
-    /// Parse CLI config overrides.
-    pub fn from_options(options: &[String]) -> Self {
-        let mut config_options = Vec::new();
-
-        for option in options {
-            let parsed = match toml::from_str(option) {
-                Ok(parsed) => parsed,
-                Err(err) => {
-                    eprintln!("Ignoring invalid CLI option '{option}': {err}");
-                    continue;
-                }
-            };
-
-            config_options.push((option.clone(), parsed));
-        }
-
-        Self { config_options }
-    }
-
-    /// Apply CLI config overrides, removing broken ones.
-    pub fn override_config(&mut self, config: &mut UiConfig) {
-        let mut i = 0;
-        while i < self.config_options.len() {
-            let (option, parsed) = &self.config_options[i];
-            match config.replace(parsed.clone()) {
-                Err(err) => {
-                    error!(
-                        target: LOG_TARGET_IPC_CONFIG,
-                        "Unable to override option '{option}': {err}"
-                    );
-                    self.config_options.remove(i);
-                }
-                Ok(_) => i += 1,
-            }
-        }
-    }
-
-    /// Apply CLI config overrides to a CoW config.
-    pub fn override_config_rc(&mut self, config: Rc<UiConfig>) -> Rc<UiConfig> {
-        if self.config_options.is_empty() {
-            return config;
-        }
-
-        let mut config = (*config).clone();
-        self.override_config(&mut config);
-        Rc::new(config)
-    }
-
-    /// Apply CLI config overrides to a CoW config (immutable version).
-    pub fn override_config_rc_immutable(&self, config: Rc<UiConfig>) -> Rc<UiConfig> {
-        if self.config_options.is_empty() {
-            return config;
-        }
-
-        let mut config = (*config).clone();
-        for (option, parsed) in &self.config_options {
-            if let Err(err) = config.replace(parsed.clone()) {
-                error!(
-                    target: LOG_TARGET_IPC_CONFIG,
-                    "Unable to override option '{option}': {err}"
-                );
-            }
-        }
-        Rc::new(config)
-    }
-
-    /// Append another ParsedOptions.
-    pub fn append(&mut self, other: &ParsedOptions) {
-        self.config_options
-            .extend(other.config_options.iter().cloned());
-    }
-
-    /// Merge another ParsedOptions (same as append).
-    pub fn merge(&mut self, other: &ParsedOptions) {
-        self.append(other);
-    }
-}
-
-impl Deref for ParsedOptions {
-    type Target = Vec<(String, Value)>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.config_options
-    }
-}
-
-impl DerefMut for ParsedOptions {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.config_options
-    }
 }
 
 /// IPC socket messages.
@@ -607,24 +455,9 @@ impl DerefMut for ParsedOptions {
 pub enum SocketMessage {
     /// Create a new window in the same Alacritty process.
     CreateWindow(WindowOptions),
-    /// Update the Alacritty configuration.
-    Config(IpcConfig),
+
     /// Read runtime Alacritty configuration.
     GetConfig(IpcGetConfig),
-}
-
-/// Parameters to the `config` IPC subcommand / message.
-#[cfg(unix)]
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct IpcConfig {
-    /// Configuration file options [example: 'cursor.style="Beam"'].
-    #[serde(default)]
-    pub options: Vec<String>,
-    /// Window ID for the config change. Use -1 to apply to all windows.
-    pub window_id: Option<i128>,
-    /// Clear all runtime configuration changes.
-    #[serde(default)]
-    pub reset: bool,
 }
 
 /// Parameters to the `get-config` IPC message.
@@ -646,7 +479,6 @@ pub enum SocketReply {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use toml::Table;
 
     fn args(args: &[&str]) -> Vec<String> {
         args.iter().map(|arg| (*arg).to_owned()).collect()
@@ -692,12 +524,8 @@ mod tests {
     }
 
     #[test]
-    fn parses_repeated_config_overrides() {
-        let options =
-            Options::parse(args(&["-o", "cursor.style='Beam'", "window.opacity=0.8"])).unwrap();
-
-        assert_eq!(options.window_options.option.len(), 2);
-        assert_eq!(options.config_options.len(), 2);
+    fn rejects_config_overrides() {
+        assert!(Options::parse(args(&["-o", "window.opacity=0.8"])).is_err());
     }
 
     #[test]
@@ -731,41 +559,6 @@ mod tests {
         Options::default().override_config(&mut config);
 
         assert!(config.window.dynamic_title);
-    }
-
-    #[test]
-    fn valid_option_as_value() {
-        let value: Value = toml::from_str("field=true").unwrap();
-
-        let mut table = Table::new();
-        table.insert(String::from("field"), Value::Boolean(true));
-
-        assert_eq!(value, Value::Table(table));
-
-        let value: Value = toml::from_str("parent.field=true").unwrap();
-
-        let mut parent_table = Table::new();
-        parent_table.insert(String::from("field"), Value::Boolean(true));
-        let mut table = Table::new();
-        table.insert(String::from("parent"), Value::Table(parent_table));
-
-        assert_eq!(value, Value::Table(table));
-    }
-
-    #[test]
-    fn invalid_option_as_value() {
-        let value = toml::from_str::<Value>("}");
-        assert!(value.is_err());
-    }
-
-    #[test]
-    fn float_option_as_value() {
-        let value: Value = toml::from_str("float=3.4").unwrap();
-
-        let mut expected = Table::new();
-        expected.insert(String::from("float"), Value::Float(3.4));
-
-        assert_eq!(value, Value::Table(expected));
     }
 
     #[test]

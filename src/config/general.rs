@@ -12,12 +12,6 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(not(unix), derive(Default))]
 #[serde(default)]
 pub struct General {
-    /// Configuration file imports.
-    ///
-    /// This is never read since the field is directly accessed through the config's
-    /// [`toml::Value`], but still present to prevent unused field warnings.
-    pub import: Vec<String>,
-
     /// Shell startup directory.
     pub working_directory: Option<PathBuf>,
 
@@ -33,7 +27,6 @@ impl Default for General {
         Self {
             ipc_socket: true,
             working_directory: Default::default(),
-            import: Default::default(),
         }
     }
 }

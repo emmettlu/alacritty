@@ -208,11 +208,6 @@ impl Rgb {
     pub const fn new(r: u8, g: u8, b: u8) -> Self {
         Self(VteRgb { r, g, b })
     }
-
-    #[inline]
-    pub fn as_tuple(self) -> (u8, u8, u8) {
-        (self.0.r, self.0.g, self.0.b)
-    }
 }
 
 impl From<VteRgb> for Rgb {

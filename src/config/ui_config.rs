@@ -1,6 +1,6 @@
 use std::cell::{OnceCell, RefCell};
 use std::collections::HashMap;
-use std::error::Error;
+
 use std::fmt::{self, Formatter};
 use std::mem;
 use std::path::PathBuf;
@@ -12,36 +12,26 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use unicode_width::UnicodeWidthChar;
 use winit::keyboard::{Key, ModifiersState};
 
-use crate::config_compat::SerdeReplace;
-use crate::impl_replace;
-
 use crate::terminal::term::Config as TermConfig;
 use crate::terminal::term::search::RegexSearch;
 use crate::terminal::tty::{Options as PtyOptions, Shell};
 
 use crate::config::LOG_TARGET_CONFIG;
-use crate::config::bell::{BellAnimation, BellConfig};
+use crate::config::bell::BellConfig;
 use crate::config::bindings::{
-    self, Action, Binding, BindingKey, BindingMode, KeyBinding, KeyLocation, ModeWrapper,
-    ModsWrapper, MouseAction, MouseBinding, SearchAction, SerdeViMotion, ViAction,
+    self, Action, Binding, BindingKey, KeyBinding, KeyLocation, ModeWrapper, ModsWrapper,
+    MouseBinding,
 };
-use crate::config::color::{
-    BarColors, BrightColors, Colors, DimColors, FocusedMatchColors, HintColors, HintEndColors,
-    HintStartColors, IndexedColor, InvertedCellColors, LineIndicatorColors, MatchColors,
-    NormalColors, PrimaryColors, SearchColors,
-};
-use crate::config::cursor::{ConfigCursorStyle, Cursor, CursorBlinking, CursorShape};
+use crate::config::color::Colors;
+use crate::config::cursor::Cursor;
 use crate::config::debug::Debug;
-use crate::config::font::{Font, FontDescription, SecondaryFontDescription};
+use crate::config::font::Font;
 use crate::config::general::General;
 use crate::config::mouse::Mouse;
 use crate::config::scrolling::Scrolling;
 use crate::config::selection::Selection;
-use crate::config::terminal::SerdeOsc52;
 use crate::config::terminal::Terminal;
-use crate::config::window::{
-    Decorations, Dimensions, Identity, OptionAsAlt, StartupMode, Theme, WindowConfig, WindowLevel,
-};
+use crate::config::window::WindowConfig;
 
 /// Regex used for the default URL hint.
 #[rustfmt::skip]
@@ -101,13 +91,6 @@ pub struct UiConfig {
     #[serde(skip)]
     shell: Option<Program>,
 
-    /// Configuration file imports.
-    ///
-    /// This is never read since the field is directly accessed through the config's
-    /// [`toml::Value`], but still present to prevent unused field warnings.
-    #[serde(skip)]
-    import: Option<Vec<String>>,
-
     /// Shell startup directory.
     #[serde(skip)]
     working_directory: Option<PathBuf>,
@@ -117,63 +100,6 @@ pub struct UiConfig {
     #[serde(skip)]
     pub ipc_socket: Option<bool>,
 }
-
-impl_replace!(
-    UiConfig,
-    General,
-    Scrolling,
-    Cursor,
-    ConfigCursorStyle,
-    CursorBlinking,
-    CursorShape,
-    Selection,
-    Font,
-    FontDescription,
-    SecondaryFontDescription,
-    WindowConfig,
-    Identity,
-    StartupMode,
-    Decorations,
-    Dimensions,
-    OptionAsAlt,
-    Theme,
-    WindowLevel,
-    Mouse,
-    Debug,
-    BellConfig,
-    BellAnimation,
-    Colors,
-    LineIndicatorColors,
-    HintColors,
-    HintStartColors,
-    HintEndColors,
-    IndexedColor,
-    InvertedCellColors,
-    SearchColors,
-    FocusedMatchColors,
-    MatchColors,
-    BarColors,
-    PrimaryColors,
-    NormalColors,
-    BrightColors,
-    DimColors,
-    Keyboard,
-    Hints,
-    HintInternalAction,
-    HintAction,
-    Hint,
-    HintBinding,
-    HintMouse,
-    Terminal,
-    SerdeOsc52,
-    Action,
-    ViAction,
-    SearchAction,
-    MouseAction,
-    BindingMode,
-    ModsWrapper,
-    SerdeViMotion,
-);
 
 impl UiConfig {
     /// Derive [`TermConfig`] from the config.
@@ -720,14 +646,6 @@ impl From<Program> for Shell {
             Program::Just(program) => Shell::new(program, Vec::new()),
             Program::WithArgs { program, args } => Shell::new(program, args),
         }
-    }
-}
-
-impl SerdeReplace for Program {
-    fn replace(&mut self, value: toml::Value) -> Result<(), Box<dyn Error>> {
-        *self = Self::deserialize(value)?;
-
-        Ok(())
     }
 }
 

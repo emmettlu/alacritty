@@ -724,21 +724,6 @@ impl WgpuRenderer {
         }
     }
 
-    #[cfg(unix)]
-    pub(crate) fn update_surface_opacity(&mut self, opacity: f32) {
-        self.surface_opacity = opacity;
-        let caps = self.surface.get_capabilities(&self.adapter);
-        let Some(alpha_mode) = Self::select_alpha_mode(&caps.alpha_modes, opacity) else {
-            warn!("wgpu surface exposes no alpha modes");
-            return;
-        };
-
-        if self.surface_config.alpha_mode != alpha_mode {
-            self.surface_config.alpha_mode = alpha_mode;
-            self.surface_config_dirty = true;
-        }
-    }
-
     pub(crate) fn render_frame(
         &mut self,
         frame: &mut WgpuFrame,

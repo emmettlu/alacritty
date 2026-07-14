@@ -1,12 +1,11 @@
 use std::fmt::{self, Display, Formatter};
 use std::path::{Path, PathBuf};
-use std::result::Result as StdResult;
-use std::{env, fs, io, process};
+use std::{fs, io, process};
 
 use log::{error, info};
 use serde::Deserialize;
+use toml::Value;
 use toml::de::Error as TomlError;
-use toml::{Table, Value};
 
 pub mod bell;
 pub mod color;
@@ -16,7 +15,6 @@ pub mod font;
 pub mod general;
 pub mod scrolling;
 pub mod selection;
-pub mod serde_utils;
 pub mod terminal;
 pub mod ui_config;
 pub mod window;
@@ -33,31 +31,24 @@ pub use crate::config::bindings::{
 pub use crate::config::ui_config::UiConfig;
 use crate::logging::LOG_TARGET_CONFIG;
 
-/// Maximum number of depth for the configuration file imports.
-pub const IMPORT_RECURSION_LIMIT: usize = 5;
-
 /// Result from config loading.
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Errors occurring during config loading.
 #[derive(Debug)]
 pub enum Error {
-    /// Couldn't read $HOME environment variable.
-    ReadingEnvHome(env::VarError),
-
-    /// io error reading file.
+    /// I/O error reading the configuration file.
     Io(io::Error),
 
-    /// Invalid toml.
+    /// Invalid TOML.
     Toml(TomlError),
 }
 
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Error::ReadingEnvHome(err) => err.source(),
-            Error::Io(err) => err.source(),
-            Error::Toml(err) => err.source(),
+            Self::Io(err) => err.source(),
+            Self::Toml(err) => err.source(),
         }
     }
 }
@@ -65,30 +56,21 @@ impl std::error::Error for Error {
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Error::ReadingEnvHome(err) => {
-                write!(f, "Unable to read $HOME environment variable: {err}")
-            }
-            Error::Io(err) => write!(f, "Error reading config file: {err}"),
-            Error::Toml(err) => write!(f, "Config error: {err}"),
+            Self::Io(err) => write!(f, "Error reading config file: {err}"),
+            Self::Toml(err) => write!(f, "Config error: {err}"),
         }
     }
 }
 
-impl From<env::VarError> for Error {
-    fn from(val: env::VarError) -> Self {
-        Error::ReadingEnvHome(val)
-    }
-}
-
 impl From<io::Error> for Error {
-    fn from(val: io::Error) -> Self {
-        Error::Io(val)
+    fn from(value: io::Error) -> Self {
+        Self::Io(value)
     }
 }
 
 impl From<TomlError> for Error {
-    fn from(val: TomlError) -> Self {
-        Error::Toml(val)
+    fn from(value: TomlError) -> Self {
+        Self::Toml(value)
     }
 }
 
@@ -100,10 +82,6 @@ pub fn load(options: &mut Options) -> UiConfig {
         .clone()
         .or_else(|| installed_config("toml"));
 
-    // Load the config using the following fallback behavior:
-    //  - Config path + CLI overrides
-    //  - CLI overrides
-    //  - Default
     let mut config = match config_path.as_ref() {
         Some(config_path) => match load_from(config_path) {
             Ok(config) => config,
@@ -120,18 +98,11 @@ pub fn load(options: &mut Options) -> UiConfig {
         }
     };
 
-    after_loading(&mut config, options);
-
+    options.override_config(&mut config);
     config
 }
 
-/// Modifications after the `UiConfig` object is created.
-fn after_loading(config: &mut UiConfig, options: &mut Options) {
-    // Override config with CLI options.
-    options.override_config(config);
-}
-
-/// Load configuration file and log errors.
+/// Load a configuration file and log errors.
 fn load_from(path: &Path) -> Result<UiConfig> {
     match read_config(path) {
         Ok(config) => Ok(config),
@@ -146,172 +117,20 @@ fn load_from(path: &Path) -> Result<UiConfig> {
     }
 }
 
-/// Deserialize configuration file from path.
+/// Deserialize a single configuration file.
 fn read_config(path: &Path) -> Result<UiConfig> {
-    let mut config_paths = Vec::new();
-    let config_value = parse_config(path, &mut config_paths, IMPORT_RECURSION_LIMIT)?;
-
-    // Deserialize to concrete type.
-    let mut config = UiConfig::deserialize(config_value)?;
-    config.config_paths = config_paths;
-
+    let contents = fs::read_to_string(path)?;
+    let contents = contents.strip_prefix('\u{FEFF}').unwrap_or(&contents);
+    let value = toml::from_str::<Value>(contents)?;
+    let mut config = UiConfig::deserialize(value)?;
+    config.config_paths.push(path.to_owned());
     Ok(config)
 }
 
-/// Deserialize all configuration files as generic Value.
-fn parse_config(
-    path: &Path,
-    config_paths: &mut Vec<PathBuf>,
-    recursion_limit: usize,
-) -> Result<Value> {
-    config_paths.push(path.to_owned());
-
-    // Deserialize the configuration file.
-    let config = deserialize_config(path, false)?;
-
-    // Merge config with imports.
-    let imports = load_imports(&config, path, config_paths, recursion_limit);
-    Ok(serde_utils::merge(imports, config))
-}
-
-/// Deserialize a configuration file.
-pub fn deserialize_config(path: &Path, _warn_pruned: bool) -> Result<Value> {
-    let mut contents = fs::read_to_string(path)?;
-
-    // Remove UTF-8 BOM.
-    if contents.starts_with('\u{FEFF}') {
-        contents = contents.split_off(3);
-    }
-
-    // Load configuration file as Value.
-    let config: Value = toml::from_str(&contents)?;
-
-    Ok(config)
-}
-
-/// Load all referenced configuration files.
-fn load_imports(
-    config: &Value,
-    base_path: &Path,
-    config_paths: &mut Vec<PathBuf>,
-    recursion_limit: usize,
-) -> Value {
-    // Get paths for all imports.
-    let import_paths = match imports(config, base_path, recursion_limit) {
-        Ok(import_paths) => import_paths,
-        Err(err) => {
-            error!(target: LOG_TARGET_CONFIG, "{err}");
-            return Value::Table(Table::new());
-        }
-    };
-
-    // Parse configs for all imports recursively.
-    let mut merged = Value::Table(Table::new());
-    for import_path in import_paths {
-        let path = match import_path {
-            Ok(path) => path,
-            Err(err) => {
-                error!(target: LOG_TARGET_CONFIG, "{err}");
-                continue;
-            }
-        };
-
-        match parse_config(&path, config_paths, recursion_limit - 1) {
-            Ok(config) => merged = serde_utils::merge(merged, config),
-            Err(Error::Io(io)) if io.kind() == io::ErrorKind::NotFound => {
-                info!(target: LOG_TARGET_CONFIG, "Config import not found:\n  {:?}", path.display());
-                continue;
-            }
-            Err(err) => {
-                error!(target: LOG_TARGET_CONFIG, "Unable to import config {path:?}: {err}")
-            }
-        }
-    }
-
-    merged
-}
-
-/// Get all import paths for a configuration.
-pub fn imports(
-    config: &Value,
-    base_path: &Path,
-    recursion_limit: usize,
-) -> StdResult<Vec<StdResult<PathBuf, String>>, String> {
-    let imports = config
-        .get("import")
-        .or_else(|| config.get("general").and_then(|g| g.get("import")));
-    let imports = match imports {
-        Some(Value::Array(imports)) => imports,
-        Some(_) => return Err("Invalid import type: expected a sequence".into()),
-        None => return Ok(Vec::new()),
-    };
-
-    // Limit recursion to prevent infinite loops.
-    if !imports.is_empty() && recursion_limit == 0 {
-        return Err("Exceeded maximum configuration import depth".into());
-    }
-
-    let mut import_paths = Vec::new();
-
-    for import in imports {
-        let path = match import {
-            Value::String(path) => PathBuf::from(path),
-            _ => {
-                import_paths.push(Err(
-                    "Invalid import element type: expected path string".into()
-                ));
-                continue;
-            }
-        };
-
-        let normalized = normalize_import(base_path, path);
-
-        import_paths.push(Ok(normalized));
-    }
-
-    Ok(import_paths)
-}
-
-/// Normalize import paths.
-pub fn normalize_import(base_config_path: &Path, import_path: impl Into<PathBuf>) -> PathBuf {
-    let mut import_path = import_path.into();
-
-    // Resolve paths relative to user's home directory.
-    if let Ok(stripped) = import_path.strip_prefix("~/") {
-        match home_dir() {
-            Some(home) => import_path = home.join(stripped),
-            None => error!(
-                target: LOG_TARGET_CONFIG,
-                "Unable to resolve import path {:?}: home directory not found",
-                import_path
-            ),
-        }
-    }
-
-    if import_path.is_relative()
-        && let Some(base_config_dir) = base_config_path.parent()
-    {
-        import_path = base_config_dir.join(import_path)
-    }
-
-    import_path
-}
-
-#[inline(always)]
-fn home_dir() -> Option<PathBuf> {
-    dirs::home_dir()
-}
-
-/// Get the location of the first found default config file paths
-/// according to the following order:
-///
-/// 1. $XDG_CONFIG_HOME/alacritty/alacritty.toml
-/// 2. $XDG_CONFIG_HOME/alacritty.toml
-/// 3. $HOME/.config/alacritty/alacritty.toml
-/// 4. $HOME/.alacritty.toml
+/// Get the default configuration file path.
 pub fn installed_config(suffix: &str) -> Option<PathBuf> {
     let file_name = format!("alacritty.{suffix}");
     dirs::config_dir()
         .map(|path| path.join("alacritty").join(file_name))
-        .filter(|new| new.exists())
+        .filter(|path| path.exists())
 }

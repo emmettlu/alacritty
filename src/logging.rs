@@ -18,9 +18,6 @@ use crate::cli::Options;
 use crate::event::{Event, EventType};
 use crate::message_bar::{Message, MessageType};
 
-/// Logging target for IPC config error messages.
-pub const LOG_TARGET_IPC_CONFIG: &str = "alacritty_log_window_config";
-
 /// Name for the environment variable containing the log file's path.
 const ALACRITTY_LOG_ENV: &str = "ALACRITTY_LOG";
 
