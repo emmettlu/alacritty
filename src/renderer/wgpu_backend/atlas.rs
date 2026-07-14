@@ -6,13 +6,43 @@ use std::borrow::Cow;
 use crossfont::{BitmapBuffer, RasterizedGlyph};
 use log::warn;
 
-use super::glyph_cache::Glyph;
-
 /// Atlas 纹理大小 (像素).
 ///
 /// 初始 atlas 用 512x512 降低启动显存占用, 后续空间不足会自动创建新的 atlas.
 pub const ATLAS_SIZE: u32 = 512;
 const GLYPH_PADDING: u32 = 1;
+
+#[derive(Copy, Clone, Debug)]
+pub struct Glyph {
+    /// 此字形所在的 atlas 索引.
+    pub atlas_index: usize,
+    pub multicolor: bool,
+    pub top: i16,
+    pub left: i16,
+    pub width: i16,
+    pub height: i16,
+    pub uv_bot: f32,
+    pub uv_left: f32,
+    pub uv_width: f32,
+    pub uv_height: f32,
+}
+
+impl Glyph {
+    fn empty(atlas_index: usize) -> Self {
+        Self {
+            atlas_index,
+            multicolor: false,
+            top: 0,
+            left: 0,
+            width: 0,
+            height: 0,
+            uv_bot: 0.,
+            uv_left: 0.,
+            uv_width: 0.,
+            uv_height: 0.,
+        }
+    }
+}
 
 /// 管理单个纹理 atlas.
 ///
@@ -32,12 +62,12 @@ const GLYPH_PADDING: u32 = 1;
 ///   └─────┴─────┴─────┴───────────┘
 /// (0, 0)  x->
 /// ```
-pub struct Atlas {
+struct Atlas {
     /// 此 atlas 的 wgpu 纹理.
-    pub texture: wgpu::Texture,
+    texture: wgpu::Texture,
 
     /// 此 atlas 纹理的 texture view.
-    pub texture_view: wgpu::TextureView,
+    texture_view: wgpu::TextureView,
 
     /// atlas 宽度.
     width: u32,
@@ -55,8 +85,24 @@ pub struct Atlas {
     row_tallest: u32,
 }
 
+/// 单个 atlas 页面及其对应的 GPU 绑定资源.
+struct GlyphAtlasPage {
+    atlas: Atlas,
+    bind_group: wgpu::BindGroup,
+}
+
+/// 原子管理所有字形 atlas 页面及其绑定资源.
+pub struct GlyphAtlas {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    bind_group_layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
+    pages: Vec<GlyphAtlasPage>,
+    active_page: usize,
+}
+
 /// 插入纹理到 Atlas 时可能的错误.
-pub enum AtlasInsertError {
+enum AtlasInsertError {
     /// 纹理 atlas 已满.
     Full,
 
@@ -64,8 +110,95 @@ pub enum AtlasInsertError {
     GlyphTooLarge,
 }
 
+impl GlyphAtlas {
+    pub fn new(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        bind_group_layout: wgpu::BindGroupLayout,
+        sampler: wgpu::Sampler,
+    ) -> Self {
+        let initial_page = Self::create_page(&device, &bind_group_layout, &sampler);
+
+        Self {
+            device,
+            queue,
+            bind_group_layout,
+            sampler,
+            pages: vec![initial_page],
+            active_page: 0,
+        }
+    }
+
+    fn create_page(
+        device: &wgpu::Device,
+        bind_group_layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+    ) -> GlyphAtlasPage {
+        let atlas = Atlas::new(device, ATLAS_SIZE);
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("glyph_atlas_bind_group"),
+            layout: bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&atlas.texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+            ],
+        });
+
+        GlyphAtlasPage { atlas, bind_group }
+    }
+
+    /// 加载字形到 active atlas 页面, 并在页面满时同步创建下一页及其 bind group.
+    pub fn load_glyph(&mut self, rasterized: &RasterizedGlyph) -> Glyph {
+        loop {
+            let active_page = self.active_page;
+            match self.pages[active_page]
+                .atlas
+                .insert(&self.queue, rasterized)
+            {
+                Ok(mut glyph) => {
+                    glyph.atlas_index = active_page;
+                    return glyph;
+                }
+                Err(AtlasInsertError::Full) => {
+                    self.active_page += 1;
+                    if self.active_page == self.pages.len() {
+                        let page =
+                            Self::create_page(&self.device, &self.bind_group_layout, &self.sampler);
+                        self.pages.push(page);
+                    }
+                }
+                Err(AtlasInsertError::GlyphTooLarge) => {
+                    warn!(
+                        "Glyph {}x{} is too large for {}x{} atlas; rendering empty glyph",
+                        rasterized.width, rasterized.height, ATLAS_SIZE, ATLAS_SIZE
+                    );
+                    return Glyph::empty(active_page);
+                }
+            }
+        }
+    }
+
+    /// 清除所有页面的分配状态, 并重新从第一页开始填充.
+    pub fn clear(&mut self) {
+        for page in &mut self.pages {
+            page.atlas.clear();
+        }
+        self.active_page = 0;
+    }
+
+    pub(super) fn bind_group(&self, atlas_index: usize) -> &wgpu::BindGroup {
+        &self.pages[atlas_index].bind_group
+    }
+}
+
 impl Atlas {
-    pub fn new(device: &wgpu::Device, size: u32) -> Self {
+    fn new(device: &wgpu::Device, size: u32) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("alacritty_glyph_atlas"),
             size: wgpu::Extent3d {
@@ -95,14 +228,14 @@ impl Atlas {
         }
     }
 
-    pub fn clear(&mut self) {
+    fn clear(&mut self) {
         self.row_extent = 0;
         self.row_baseline = 0;
         self.row_tallest = 0;
     }
 
     /// 将一个 RasterizedGlyph 插入到纹理 atlas 中.
-    pub fn insert(
+    fn insert(
         &mut self,
         queue: &wgpu::Queue,
         glyph: &RasterizedGlyph,
@@ -193,7 +326,7 @@ impl Atlas {
         let uv_width = width as f32 / self.width as f32;
 
         Glyph {
-            atlas_index: 0, // 由调用方设置
+            atlas_index: 0, // 由 GlyphAtlas 设置
             multicolor,
             top: glyph.top as i16,
             left: glyph.left as i16,
@@ -207,7 +340,7 @@ impl Atlas {
     }
 
     /// 检查当前行是否有空间放置指定字形.
-    pub fn room_in_row(&self, raw: &RasterizedGlyph) -> bool {
+    fn room_in_row(&self, raw: &RasterizedGlyph) -> bool {
         let Some(remaining_height) = self.height.checked_sub(self.row_baseline) else {
             return false;
         };
@@ -223,7 +356,7 @@ impl Atlas {
     }
 
     /// 标记当前行已满, 准备写入下一行.
-    pub fn advance_row(&mut self) -> Result<(), AtlasInsertError> {
+    fn advance_row(&mut self) -> Result<(), AtlasInsertError> {
         if self.row_tallest == 0 {
             return Err(AtlasInsertError::Full);
         }
@@ -238,58 +371,5 @@ impl Atlas {
         self.row_tallest = 0;
 
         Ok(())
-    }
-
-    /// 加载字形到纹理 atlas.
-    ///
-    /// 如果当前 atlas 已满, 将创建新的 atlas.
-    #[inline]
-    pub fn load_glyph(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        atlas: &mut Vec<Atlas>,
-        current_atlas: &mut usize,
-        rasterized: &RasterizedGlyph,
-    ) -> Glyph {
-        loop {
-            match atlas[*current_atlas].insert(queue, rasterized) {
-                Ok(mut glyph) => {
-                    glyph.atlas_index = *current_atlas;
-                    return glyph;
-                }
-                Err(AtlasInsertError::Full) => {
-                    *current_atlas += 1;
-                    if *current_atlas == atlas.len() {
-                        atlas.push(Atlas::new(device, ATLAS_SIZE));
-                    }
-                }
-                Err(AtlasInsertError::GlyphTooLarge) => {
-                    warn!(
-                        "Glyph {}x{} is too large for {}x{} atlas; rendering empty glyph",
-                        rasterized.width, rasterized.height, ATLAS_SIZE, ATLAS_SIZE
-                    );
-                    return Glyph {
-                        atlas_index: *current_atlas,
-                        multicolor: false,
-                        top: 0,
-                        left: 0,
-                        width: 0,
-                        height: 0,
-                        uv_bot: 0.,
-                        uv_left: 0.,
-                        uv_width: 0.,
-                        uv_height: 0.,
-                    };
-                }
-            }
-        }
-    }
-
-    #[inline]
-    pub fn clear_atlas(atlas: &mut [Atlas], current_atlas: &mut usize) {
-        for a in atlas.iter_mut() {
-            a.clear();
-        }
-        *current_atlas = 0;
     }
 }

@@ -1,10 +1,13 @@
 use std::fmt::{self, Display, Formatter};
+use std::sync::Arc;
 
 use bitflags::bitflags;
 
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event_loop::ActiveEventLoop;
 use winit::monitor::MonitorHandle;
+#[cfg(target_os = "macos")]
+use winit::platform::macos::{OptionAsAlt, WindowAttributesExtMacOS, WindowExtMacOS};
 #[cfg(windows)]
 use winit::platform::windows::{IconExtWindows, WindowAttributesExtWindows};
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -32,9 +35,6 @@ const IDI_ICON: u16 = 0x101;
 pub enum Error {
     /// Error creating the window.
     WindowCreation(winit::error::OsError),
-
-    /// Error dealing with fonts.
-    Font(crossfont::Error),
 }
 
 /// Result of fallible operations concerning a Window.
@@ -44,7 +44,6 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Error::WindowCreation(err) => err.source(),
-            Error::Font(err) => err.source(),
         }
     }
 }
@@ -53,7 +52,6 @@ impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Error::WindowCreation(err) => write!(f, "Error creating window; {err}"),
-            Error::Font(err) => err.fmt(f),
         }
     }
 }
@@ -61,12 +59,6 @@ impl Display for Error {
 impl From<winit::error::OsError> for Error {
     fn from(val: winit::error::OsError) -> Self {
         Error::WindowCreation(val)
-    }
-}
-
-impl From<crossfont::Error> for Error {
-    fn from(val: crossfont::Error) -> Self {
-        Error::Font(val)
     }
 }
 
@@ -86,7 +78,7 @@ pub struct Window {
     /// Hold the window when terminal exits.
     pub hold: bool,
 
-    window: WinitWindow,
+    window: Arc<WinitWindow>,
 
     /// Current window title.
     title: String,
@@ -108,7 +100,12 @@ impl Window {
         options: &mut WindowOptions,
     ) -> Result<Window> {
         let identity = identity.clone();
-        let mut window_attributes = Window::get_platform_window(&identity, &config.window);
+        let mut window_attributes = Window::get_platform_window(
+            &identity,
+            &config.window,
+            #[cfg(target_os = "macos")]
+            &options.window_tabbing_id.take(),
+        );
 
         if let Some(position) = config.window.position {
             window_attributes = window_attributes
@@ -133,7 +130,7 @@ impl Window {
             .with_fullscreen(config.window.fullscreen())
             .with_window_level(config.window.level.into());
 
-        let window = event_loop.create_window(window_attributes)?;
+        let window = Arc::new(event_loop.create_window(window_attributes)?);
 
         // Text cursor.
         let current_mouse_cursor = CursorIcon::Text;
@@ -263,7 +260,7 @@ impl Window {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(unix, not(target_os = "macos")))]
     pub fn get_platform_window(_: &Identity, window_config: &WindowConfig) -> WindowAttributes {
         WinitWindow::default_attributes()
             .with_decorations(window_config.decorations != Decorations::None)
@@ -283,9 +280,9 @@ impl Window {
         self.window.id()
     }
 
-    /// 获取底层 winit 窗口的引用 (wgpu 创建 surface 时需要).
-    pub fn winit_window(&self) -> &WinitWindow {
-        &self.window
+    /// Clone the owned winit window handle for surface creation.
+    pub fn surface_target(&self) -> Arc<WinitWindow> {
+        Arc::clone(&self.window)
     }
 
     #[cfg(unix)]
@@ -298,6 +295,12 @@ impl Window {
         self.window.set_blur(blur);
     }
 
+    /// Disable macOS window shadows for transparent windows.
+    #[cfg(target_os = "macos")]
+    pub fn set_has_shadow(&self, has_shadow: bool) {
+        self.window.set_has_shadow(has_shadow);
+    }
+
     pub fn set_maximized(&self, maximized: bool) {
         self.window.set_maximized(maximized);
     }
@@ -306,8 +309,8 @@ impl Window {
         self.window.set_minimized(minimized);
     }
 
-    pub fn set_resize_increments(&self, increments: PhysicalSize<f32>) {
-        self.window.set_resize_increments(Some(increments));
+    pub fn set_resize_increments(&self, increments: Option<PhysicalSize<f32>>) {
+        self.window.set_resize_increments(increments);
     }
 
     /// Toggle the window's fullscreen state.
@@ -332,6 +335,17 @@ impl Window {
         self.window.set_theme(theme);
     }
 
+    #[cfg(target_os = "macos")]
+    pub fn toggle_simple_fullscreen(&self) {
+        self.window
+            .set_simple_fullscreen(!self.window.simple_fullscreen());
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn set_option_as_alt(&self, option_as_alt: OptionAsAlt) {
+        self.window.set_option_as_alt(option_as_alt);
+    }
+
     pub fn set_fullscreen(&self, fullscreen: bool) {
         if fullscreen {
             self.window
@@ -343,6 +357,37 @@ impl Window {
 
     pub fn current_monitor(&self) -> Option<MonitorHandle> {
         self.window.current_monitor()
+    }
+
+    /// Select tab at the given `index`.
+    #[cfg(target_os = "macos")]
+    pub fn select_tab_at_index(&self, index: usize) {
+        self.window.select_tab_at_index(index);
+    }
+
+    /// Select the last tab.
+    #[cfg(target_os = "macos")]
+    pub fn select_last_tab(&self) {
+        if let Some(index) = self.window.num_tabs().checked_sub(1) {
+            self.window.select_tab_at_index(index);
+        }
+    }
+
+    /// Select next tab.
+    #[cfg(target_os = "macos")]
+    pub fn select_next_tab(&self) {
+        self.window.select_next_tab();
+    }
+
+    /// Select previous tab.
+    #[cfg(target_os = "macos")]
+    pub fn select_previous_tab(&self) {
+        self.window.select_previous_tab();
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn tabbing_id(&self) -> String {
+        self.window.tabbing_identifier()
     }
 
     /// Set IME inhibitor state and disable IME while any are present.

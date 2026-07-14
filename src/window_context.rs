@@ -303,13 +303,16 @@ impl WindowContext {
 
         // Redraw the window.
         let terminal = self.terminal.lock();
-        self.display.draw(
+        let presented = self.display.draw(
             terminal,
             scheduler,
             &self.message_buffer,
             &self.config,
             &mut self.search_state,
         );
+        if !presented {
+            self.dirty = true;
+        }
     }
 
     /// Process events for this terminal window.

@@ -40,7 +40,7 @@ use crate::display::window::Window;
 use crate::event::{Event, EventType, Mouse, SearchState};
 use crate::message_bar::{MessageBuffer, MessageType};
 use crate::renderer::rects::{RenderLine, RenderLines, RenderRect};
-use crate::renderer::wgpu_backend::WgpuRenderer;
+use crate::renderer::wgpu_backend::{FrameUnavailable, TextLayer, WgpuRenderer};
 use crate::renderer::{self, GlyphCache};
 use crate::scheduler::{Scheduler, TimerId, Topic};
 use crate::string::{ShortenDirection, StrShortener};
@@ -66,26 +66,18 @@ const SHORTENER: char = '…';
 
 #[derive(Debug)]
 pub enum Error {
-    /// Error with window management.
-    Window(window::Error),
-
     /// Error dealing with fonts.
     Font(crossfont::Error),
 
     /// Error in renderer.
     Render(renderer::Error),
-
-    /// Error during wgpu operations.
-    Wgpu(String),
 }
 
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Error::Window(err) => err.source(),
             Error::Font(err) => err.source(),
             Error::Render(err) => err.source(),
-            Error::Wgpu(_) => None,
         }
     }
 }
@@ -93,17 +85,9 @@ impl std::error::Error for Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Window(err) => err.fmt(f),
             Error::Font(err) => err.fmt(f),
             Error::Render(err) => err.fmt(f),
-            Error::Wgpu(err) => write!(f, "wgpu error: {err}"),
         }
-    }
-}
-
-impl From<window::Error> for Error {
-    fn from(val: window::Error) -> Self {
-        Error::Window(val)
     }
 }
 
@@ -319,10 +303,6 @@ impl DisplayUpdate {
 
 /// The display wraps a window, font rasterizer, and GPU renderer.
 pub struct Display {
-    // wgpu surface 通过 native window 创建并持有 unsafe static lifetime.
-    // 字段放在 `window` 前面, 确保 drop 时 surface 先释放.
-    wgpu_surface: wgpu::Surface<'static>,
-
     pub window: Window,
 
     pub size_info: SizeInfo,
@@ -351,8 +331,8 @@ pub struct Display {
     /// Unprocessed display updates.
     pub pending_update: DisplayUpdate,
 
-    /// The renderer update that takes place only once before the actual rendering.
-    pub pending_renderer_update: Option<RendererUpdate>,
+    /// Font cache reset deferred until immediately before rendering.
+    pending_font_cache_reset: bool,
 
     /// The ime on the given display.
     pub ime: Ime,
@@ -371,7 +351,6 @@ pub struct Display {
 
     // --- wgpu 渲染器 ---
     wgpu_renderer: WgpuRenderer,
-    wgpu_surface_config: wgpu::SurfaceConfiguration,
 
     glyph_cache: GlyphCache,
     meter: Meter,
@@ -383,7 +362,7 @@ impl Display {
         let rasterizer = Rasterizer::new()?;
 
         let font_size = config.font.size().scale(scale_factor);
-        debug!("Loading \"{}\" font", &config.font.normal().family);
+        debug!("Loading \"{}\" font", config.font.normal().family);
         let font = config.font.clone().with_size(font_size);
         let mut glyph_cache = GlyphCache::new(rasterizer, &font)?;
 
@@ -396,113 +375,13 @@ impl Display {
             window.request_inner_size(size);
         }
 
-        // 创建 wgpu instance / adapter / device / queue / surface.
-        let mut instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
-        #[cfg(windows)]
-        {
-            instance_descriptor.backends = wgpu::Backends::DX12;
-            if config.window_opacity() < 1.0 {
-                instance_descriptor.backend_options.dx12.presentation_system =
-                    wgpu::Dx12SwapchainKind::DxgiFromVisual;
-            }
-        }
-        #[cfg(unix)]
-        {
-            instance_descriptor.backends = wgpu::Backends::VULKAN;
-        }
-        let instance = wgpu::Instance::new(instance_descriptor);
-
-        // SAFETY: surface 在 `Display` 中声明于 `window` 前, 会先于它引用的 native window
-        // 释放. 所有渲染都发生在 event-loop 线程, 且只在 window 存活期间进行.
-        let wgpu_surface = unsafe {
-            let target = wgpu::SurfaceTargetUnsafe::from_display_and_window(
-                window.winit_window(),
-                window.winit_window(),
-            )
-            .map_err(|e| Error::Wgpu(format!("create surface target: {e}")))?;
-            instance
-                .create_surface_unsafe(target)
-                .map_err(|e| Error::Wgpu(format!("create surface: {e}")))?
-        };
-
-        let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            // 终端渲染负载很低, 优先集显/低功耗适配器可以避免启动独显带来的显存基线.
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: Some(&wgpu_surface),
-            force_fallback_adapter: false,
-        }))
-        .map_err(|e| Error::Wgpu(format!("no suitable GPU adapter found: {e}")))?;
-
-        info!("wgpu adapter: {:?}", adapter.get_info());
-
-        let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("alacritty_device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            ..Default::default()
-        }))
-        .map_err(|e| Error::Wgpu(format!("request device: {e}")))?;
-
         let viewport_size = window.inner_size();
-        let caps = wgpu_surface.get_capabilities(&adapter);
-        let surface_format = caps
-            .formats
-            .iter()
-            .copied()
-            .find(|format| format.is_srgb())
-            .unwrap_or(caps.formats[0]);
-        info!("wgpu surface format: {:?}", surface_format);
-
-        let alpha_mode = if config.window_opacity() < 1.0 {
-            if caps
-                .alpha_modes
-                .contains(&wgpu::CompositeAlphaMode::PreMultiplied)
-            {
-                wgpu::CompositeAlphaMode::PreMultiplied
-            } else if caps
-                .alpha_modes
-                .contains(&wgpu::CompositeAlphaMode::PostMultiplied)
-            {
-                wgpu::CompositeAlphaMode::PostMultiplied
-            } else {
-                caps.alpha_modes[0]
-            }
-        } else if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::Opaque) {
-            wgpu::CompositeAlphaMode::Opaque
-        } else {
-            caps.alpha_modes[0]
-        };
-        info!("wgpu alpha mode: {:?}", alpha_mode);
-
-        let present_mode = caps
-            .present_modes
-            .iter()
-            .copied()
-            .find(|mode| *mode == wgpu::PresentMode::AutoVsync)
-            .unwrap_or(caps.present_modes[0]);
-        info!("wgpu present mode: {:?}", present_mode);
-
-        let wgpu_surface_config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface_format,
-            view_formats: vec![],
-            alpha_mode,
-            width: viewport_size.width.max(1),
-            height: viewport_size.height.max(1),
-            desired_maximum_frame_latency: 1,
-            present_mode,
-        };
-        wgpu_surface.configure(&device, &wgpu_surface_config);
-
-        // 创建 wgpu 渲染器.
-        let mut wgpu_renderer = WgpuRenderer::new(device, queue, surface_format);
+        let mut wgpu_renderer =
+            WgpuRenderer::new(window.surface_target(), config.window_opacity())?;
 
         // 预加载常用字形.
         debug!("Filling glyph cache with common glyphs");
-        {
-            let mut loader = wgpu_renderer.loader_api();
-            glyph_cache.reset_glyph_cache(&mut loader);
-        }
+        wgpu_renderer.reset_glyph_cache(&mut glyph_cache);
 
         let padding = config.window.padding(window.scale_factor as f32);
 
@@ -529,37 +408,19 @@ impl Display {
             size_info.height()
         );
 
-        // 清屏.
+        // Clear through the same acquisition and submission path used by normal frames.
         let background_color = config.colors.primary.background;
         let skip_initial_present = config.window.maximized() && config.window_opacity() < 1.0;
         if !skip_initial_present {
-            let output = match wgpu_surface.get_current_texture() {
-                wgpu::CurrentSurfaceTexture::Success(output)
-                | wgpu::CurrentSurfaceTexture::Suboptimal(output) => output,
-                status => return Err(Error::Wgpu(format!("get current texture: {status:?}"))),
-            };
-            let view = output
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default());
-            let mut encoder = wgpu_renderer
-                .device()
-                .create_command_encoder(&Default::default());
-            wgpu_renderer.clear(
-                &mut encoder,
-                &view,
-                background_color,
-                config.window_opacity(),
-            );
-            wgpu_renderer
-                .queue()
-                .submit(std::iter::once(encoder.finish()));
-            output.present();
+            wgpu_renderer.present_clear(background_color, config.window_opacity());
         }
 
-        // 设置窗口 resize increments.
-        if config.window.resize_increments {
-            window.set_resize_increments(PhysicalSize::new(cell_width, cell_height));
-        }
+        // Set or clear window resize increments.
+        let resize_increments = config
+            .window
+            .resize_increments
+            .then(|| PhysicalSize::new(cell_width, cell_height));
+        window.set_resize_increments(resize_increments);
 
         window.set_visible(true);
         window.request_redraw();
@@ -576,15 +437,13 @@ impl Display {
             colors: List::from(&config.colors),
             frame_timer: FrameTimer::new(),
             damage_tracker,
-            wgpu_surface,
             glyph_cache,
             hint_state,
             size_info,
             font_size,
             window,
             wgpu_renderer,
-            wgpu_surface_config,
-            pending_renderer_update: Default::default(),
+            pending_font_cache_reset: false,
             vi_highlighted_hint_age: Default::default(),
             highlighted_hint_age: Default::default(),
             vi_highlighted_hint: Default::default(),
@@ -615,9 +474,7 @@ impl Display {
 
     /// Reset glyph cache.
     fn reset_glyph_cache(&mut self) {
-        let cache = &mut self.glyph_cache;
-        let mut loader = self.wgpu_renderer.loader_api();
-        cache.reset_glyph_cache(&mut loader);
+        self.wgpu_renderer.reset_glyph_cache(&mut self.glyph_cache);
     }
 
     // 渲染器更新会在实际绘制前的 [`Self::process_renderer_update`] 中统一处理.
@@ -638,10 +495,7 @@ impl Display {
             (self.size_info.cell_width(), self.size_info.cell_height());
 
         if pending_update.font().is_some() || pending_update.cursor_dirty() {
-            let renderer_update = self
-                .pending_renderer_update
-                .get_or_insert(Default::default());
-            renderer_update.clear_font_cache = true
+            self.pending_font_cache_reset = true;
         }
 
         // Update font size and cell dimensions.
@@ -684,10 +538,11 @@ impl Display {
         new_size.reserve_lines(message_bar_lines + search_lines);
 
         // Update resize increments.
-        if config.window.resize_increments {
-            self.window
-                .set_resize_increments(PhysicalSize::new(cell_width, cell_height));
-        }
+        let resize_increments = config
+            .window
+            .resize_increments
+            .then(|| PhysicalSize::new(cell_width, cell_height));
+        self.window.set_resize_increments(resize_increments);
 
         // Resize when terminal when its dimensions have changed.
         if self.size_info.screen_lines() != new_size.screen_lines
@@ -706,70 +561,17 @@ impl Display {
 
         // Check if dimensions have changed.
         if new_size != self.size_info {
-            // Queue renderer update.
-            let renderer_update = self
-                .pending_renderer_update
-                .get_or_insert(Default::default());
-            renderer_update.resize = true;
-
-            // Clear focused search match.
             search_state.clear_focused_match();
         }
         self.size_info = new_size;
     }
 
-    /// Update the state of the renderer.
+    /// Apply renderer updates deferred until immediately before drawing.
     pub fn process_renderer_update(&mut self) {
-        let renderer_update = match self.pending_renderer_update.take() {
-            Some(renderer_update) => renderer_update,
-            _ => return,
-        };
-
-        // Resize surface.
-        if renderer_update.resize {
-            let size = self.window.inner_size();
-            if size.width > 0 && size.height > 0 {
-                self.wgpu_surface_config.width = size.width;
-                self.wgpu_surface_config.height = size.height;
-                self.wgpu_surface
-                    .configure(self.wgpu_renderer.device(), &self.wgpu_surface_config);
-            }
-        }
-
-        if renderer_update.clear_font_cache {
+        if self.pending_font_cache_reset {
+            self.pending_font_cache_reset = false;
             self.reset_glyph_cache();
         }
-
-        info!(
-            "Padding: {} x {}",
-            self.size_info.padding_x(),
-            self.size_info.padding_y()
-        );
-        info!(
-            "Width: {}, Height: {}",
-            self.size_info.width(),
-            self.size_info.height()
-        );
-    }
-
-    /// Synchronize the wgpu surface with the actual window size.
-    fn sync_wgpu_surface_size(&mut self) {
-        let size = self.window.inner_size();
-        if size.width == 0 || size.height == 0 {
-            return;
-        }
-
-        if self.wgpu_surface_config.width == size.width
-            && self.wgpu_surface_config.height == size.height
-        {
-            return;
-        }
-
-        self.pending_update.set_dimensions(size);
-        self.wgpu_surface_config.width = size.width;
-        self.wgpu_surface_config.height = size.height;
-        self.wgpu_surface
-            .configure(self.wgpu_renderer.device(), &self.wgpu_surface_config);
     }
 
     /// Draw the screen.
@@ -784,7 +586,7 @@ impl Display {
         message_buffer: &MessageBuffer,
         config: &UiConfig,
         search_state: &mut SearchState,
-    ) {
+    ) -> bool {
         // 收集可渲染内容.
         let cell_capacity = self.size_info.columns() * self.size_info.screen_lines();
         let mut content = RenderableContent::new(config, self, &terminal, search_state);
@@ -846,42 +648,16 @@ impl Display {
         self.damage_tracker
             .damage_selection(selection_range, display_offset);
 
-        // 获取 surface texture.
-        let output = match self.wgpu_surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(output) => output,
-            wgpu::CurrentSurfaceTexture::Suboptimal(output) => output,
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                // 重新配置 surface.
-                self.sync_wgpu_surface_size();
-                match self.wgpu_surface.get_current_texture() {
-                    wgpu::CurrentSurfaceTexture::Success(output)
-                    | wgpu::CurrentSurfaceTexture::Suboptimal(output) => output,
-                    status => {
-                        debug!("wgpu get_current_texture error after reconfigure: {status:?}");
-                        return;
-                    }
-                }
+        let mut frame = match self.wgpu_renderer.begin_frame() {
+            Ok(frame) => frame,
+            Err(FrameUnavailable::Retry) => {
+                self.request_frame(scheduler);
+                return false;
             }
-            status => {
-                debug!("wgpu get_current_texture error: {status:?}");
-                return;
-            }
+            Err(FrameUnavailable::Suspended) => return false,
         };
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self
-            .wgpu_renderer
-            .device()
-            .create_command_encoder(&Default::default());
-
-        // 清屏.
-        self.wgpu_renderer.clear(
-            &mut encoder,
-            &view,
-            background_color,
-            config.window_opacity(),
-        );
+        self.wgpu_renderer
+            .clear_frame(&mut frame, background_color, config.window_opacity());
 
         let mut lines = RenderLines::new();
 
@@ -917,12 +693,10 @@ impl Display {
                 lines.update(cell);
             }
 
-            self.wgpu_renderer.draw_cells(
-                &size_info,
+            self.wgpu_renderer.queue_cells(
+                TextLayer::BeforeRects,
                 &mut self.glyph_cache,
-                grid_cells.into_iter(),
-                &mut encoder,
-                &view,
+                grid_cells,
             );
         }
 
@@ -933,23 +707,9 @@ impl Display {
             let obstructed_column = Some(vi_cursor_point)
                 .filter(|point| point.line == -(display_offset as i32))
                 .map(|point| point.column);
-            self.draw_line_indicator(
-                config,
-                total_lines,
-                obstructed_column,
-                line,
-                &mut encoder,
-                &view,
-            );
+            self.draw_line_indicator(config, total_lines, obstructed_column, line);
         } else if search_state.regex().is_some() {
-            self.draw_line_indicator(
-                config,
-                total_lines,
-                None,
-                display_offset,
-                &mut encoder,
-                &view,
-            );
+            self.draw_line_indicator(config, total_lines, None, display_offset);
         };
 
         // 绘制光标.
@@ -977,7 +737,7 @@ impl Display {
                     Direction::Left => BACKWARD_SEARCH_LABEL,
                 };
                 let search_text = Self::format_search(regex, search_label, size_info.columns());
-                self.draw_search(config, &search_text, &mut encoder, &view);
+                self.draw_search(config, &search_text);
 
                 let line = size_info.screen_lines();
                 let column = Column(search_text.chars().count() - 1);
@@ -1014,7 +774,7 @@ impl Display {
             } else {
                 (foreground_color, background_color)
             };
-            self.draw_ime_preview(point, fg, bg, &mut rects, config, &mut encoder, &view);
+            self.draw_ime_preview(point, fg, bg, &mut rects, config);
         }
 
         if let Some(message) = message_buffer.message() {
@@ -1042,48 +802,38 @@ impl Display {
                 .frame()
                 .add_viewport_rect(&size_info, x, y as i32, width, height);
 
-            // 绘制矩形.
-            self.wgpu_renderer
-                .draw_rects(&size_info, &metrics, rects, &mut encoder, &view);
-
-            // 绘制消息文本.
+            // Queue message text above the rectangle layer.
             let fg = config.colors.primary.background;
             for (i, message_text) in text.iter().enumerate() {
                 let point = Point::new(start_line + i, Column(0));
-                self.wgpu_renderer.draw_string(
+                self.wgpu_renderer.queue_string(
+                    TextLayer::AfterRects,
                     point,
                     fg,
                     bg,
                     message_text.chars(),
-                    &size_info,
                     &mut self.glyph_cache,
-                    &mut encoder,
-                    &view,
                 );
             }
-        } else {
-            self.wgpu_renderer
-                .draw_rects(&size_info, &metrics, rects, &mut encoder, &view);
         }
 
-        self.draw_render_timer(config, &mut encoder, &view);
+        self.draw_render_timer(config);
 
         if has_highlighted_hint {
             let cursor_point = vi_cursor_point.or(Some(cursor_point));
-            self.draw_hyperlink_preview(config, cursor_point, display_offset, &mut encoder, &view);
+            self.draw_hyperlink_preview(config, cursor_point, display_offset);
         }
+
+        self.wgpu_renderer
+            .render_frame(&mut frame, &size_info, &metrics, rects);
 
         // 通知 winit 即将 present.
         self.window.pre_present_notify();
-
-        // 提交 GPU 命令并 present.
-        self.wgpu_renderer
-            .queue()
-            .submit(std::iter::once(encoder.finish()));
-        output.present();
+        self.wgpu_renderer.submit_frame(frame);
 
         self.request_frame(scheduler);
         self.damage_tracker.swap_damage();
+        true
     }
 
     /// Update to a new configuration.
@@ -1092,6 +842,8 @@ impl Display {
         self.damage_tracker.debug = config.debug.highlight_damage;
         self.visual_bell.update_config(&config.bell);
         self.colors = List::from(&config.colors);
+        self.wgpu_renderer
+            .update_surface_opacity(config.window_opacity());
     }
 
     // ==========================================================================
@@ -1099,37 +851,24 @@ impl Display {
     // ==========================================================================
 
     #[inline(never)]
-    fn draw_search(
-        &mut self,
-        config: &UiConfig,
-        text: &str,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-    ) {
+    fn draw_search(&mut self, config: &UiConfig, text: &str) {
         let num_cols = self.size_info.columns();
         let text = format!("{text:<num_cols$}");
         let point = Point::new(self.size_info.screen_lines(), Column(0));
         let fg = config.colors.footer_bar_foreground();
         let bg = config.colors.footer_bar_background();
-        self.wgpu_renderer.draw_string(
+        self.wgpu_renderer.queue_string(
+            TextLayer::BeforeRects,
             point,
             fg,
             bg,
             text.chars(),
-            &self.size_info,
             &mut self.glyph_cache,
-            encoder,
-            view,
         );
     }
 
     #[inline(never)]
-    fn draw_render_timer(
-        &mut self,
-        config: &UiConfig,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-    ) {
+    fn draw_render_timer(&mut self, config: &UiConfig) {
         if !config.debug.render_timer {
             return;
         }
@@ -1142,15 +881,13 @@ impl Display {
         self.damage_tracker.frame().damage_line(damage);
         self.damage_tracker.next_frame().damage_line(damage);
 
-        self.wgpu_renderer.draw_string(
+        self.wgpu_renderer.queue_string(
+            TextLayer::AfterRects,
             point,
             fg,
             bg,
             timing.chars(),
-            &self.size_info,
             &mut self.glyph_cache,
-            encoder,
-            view,
         );
     }
 
@@ -1161,8 +898,6 @@ impl Display {
         total_lines: usize,
         obstructed_column: Option<Column>,
         line: usize,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
     ) {
         let columns = self.size_info.columns();
         let text = format!("[{}/{}]", line, total_lines - 1);
@@ -1184,21 +919,18 @@ impl Display {
             .unwrap_or(colors.primary.foreground);
 
         if obstructed_column.is_none_or(|obstructed_column| obstructed_column < column) {
-            self.wgpu_renderer.draw_string(
+            self.wgpu_renderer.queue_string(
+                TextLayer::BeforeRects,
                 point,
                 fg,
                 bg,
                 text.chars(),
-                &self.size_info,
                 &mut self.glyph_cache,
-                encoder,
-                view,
             );
         }
     }
 
     #[inline(never)]
-    #[allow(clippy::too_many_arguments)]
     fn draw_ime_preview(
         &mut self,
         point: Point<usize>,
@@ -1206,8 +938,6 @@ impl Display {
         bg: Rgb,
         rects: &mut Vec<RenderRect>,
         config: &UiConfig,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
     ) {
         let preedit = match self.ime.preedit() {
             Some(preedit) => preedit,
@@ -1246,15 +976,13 @@ impl Display {
         let end = Point::new(point.line, Column(end - 1));
         let metrics = self.glyph_cache.font_metrics();
 
-        self.wgpu_renderer.draw_string(
+        self.wgpu_renderer.queue_string(
+            TextLayer::BeforeRects,
             start,
             fg,
             bg,
             visible_text.chars(),
-            &self.size_info,
             &mut self.glyph_cache,
-            encoder,
-            view,
         );
 
         if point.line < self.size_info.screen_lines() {
@@ -1300,8 +1028,6 @@ impl Display {
         config: &UiConfig,
         cursor_point: Option<Point>,
         display_offset: usize,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
     ) {
         let num_cols = self.size_info.columns();
         let uris: Vec<_> = self
@@ -1346,15 +1072,13 @@ impl Display {
             self.damage_tracker.frame().damage_line(damage);
             self.damage_tracker.next_frame().damage_line(damage);
 
-            self.wgpu_renderer.draw_string(
+            self.wgpu_renderer.queue_string(
+                TextLayer::AfterRects,
                 point,
                 fg,
                 bg,
                 uri,
-                &self.size_info,
                 &mut self.glyph_cache,
-                encoder,
-                view,
             );
         }
     }
@@ -1605,19 +1329,6 @@ impl Preedit {
     }
 }
 
-/// Pending renderer updates.
-///
-/// All renderer updates are cached to be applied just before rendering, to avoid platform-specific
-/// rendering issues.
-#[derive(Debug, Default, Copy, Clone)]
-pub struct RendererUpdate {
-    /// Should resize the window.
-    resize: bool,
-
-    /// Clear font caches.
-    clear_font_cache: bool,
-}
-
 /// The frame timer state.
 pub struct FrameTimer {
     /// Base timestamp used to compute sync points.
@@ -1668,13 +1379,6 @@ impl FrameTimer {
             next_frame - now
         }
     }
-}
-
-fn block_on<F>(future: F) -> F::Output
-where
-    F: std::future::Future,
-{
-    pollster::block_on(future)
 }
 
 /// Calculate the cell dimensions based on font metrics.

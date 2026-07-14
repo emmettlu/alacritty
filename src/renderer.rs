@@ -1,4 +1,4 @@
-//! Renderer core for the Windows-only wgpu backend.
+//! Renderer core for the wgpu backend.
 
 use std::fmt;
 
@@ -14,31 +14,35 @@ pub mod wgpu_backend;
 /// Active glyph cache type for the renderer backend.
 pub use wgpu_backend::GlyphCache;
 
-/// Renderer-level error type.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Renderer initialization error.
+#[derive(Debug)]
 pub enum Error {
-    /// Generic renderer error.
-    Other(String),
+    CreateSurface(wgpu::CreateSurfaceError),
+    RequestAdapter(wgpu::RequestAdapterError),
+    RequestDevice(wgpu::RequestDeviceError),
+    MissingSurfaceCapability(&'static str),
 }
 
-impl std::error::Error for Error {}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Error::Other(err) => write!(f, "{err}"),
+            Self::CreateSurface(err) => Some(err),
+            Self::RequestAdapter(err) => Some(err),
+            Self::RequestDevice(err) => Some(err),
+            Self::MissingSurfaceCapability(_) => None,
         }
     }
 }
 
-impl From<String> for Error {
-    fn from(value: String) -> Self {
-        Self::Other(value)
-    }
-}
-
-impl From<&str> for Error {
-    fn from(value: &str) -> Self {
-        Self::Other(value.to_owned())
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CreateSurface(err) => write!(f, "failed to create surface: {err}"),
+            Self::RequestAdapter(err) => write!(f, "failed to request adapter: {err}"),
+            Self::RequestDevice(err) => write!(f, "failed to request device: {err}"),
+            Self::MissingSurfaceCapability(capability) => {
+                write!(f, "surface exposes no {capability}")
+            }
+        }
     }
 }

@@ -13,32 +13,10 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::config::font::{Font, FontDescription};
 use crate::config::ui_config::Delta;
+use crate::terminal::term::cell::Flags;
 
+use super::atlas::{Glyph, GlyphAtlas};
 use super::builtin_font;
-
-/// 允许将光栅化的字形复制到 GPU 内存的 trait.
-pub trait LoadGlyph {
-    /// 将光栅化的字形加载到 GPU 内存.
-    fn load_glyph(&mut self, rasterized: &RasterizedGlyph) -> Glyph;
-
-    /// 清除从先前加载的字形中累积的状态.
-    fn clear(&mut self);
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct Glyph {
-    /// 此字形所在的 atlas 索引.
-    pub atlas_index: usize,
-    pub multicolor: bool,
-    pub top: i16,
-    pub left: i16,
-    pub width: i16,
-    pub height: i16,
-    pub uv_bot: f32,
-    pub uv_left: f32,
-    pub uv_width: f32,
-    pub uv_height: f32,
-}
 
 /// 简单的字形缓存.
 ///
@@ -51,19 +29,19 @@ pub struct GlyphCache {
     rasterizer: Rasterizer,
 
     /// 常规字体.
-    pub font_key: FontKey,
+    font_key: FontKey,
 
     /// 粗体字体.
-    pub bold_key: FontKey,
+    bold_key: FontKey,
 
     /// 斜体字体.
-    pub italic_key: FontKey,
+    italic_key: FontKey,
 
     /// 粗斜体字体.
-    pub bold_italic_key: FontKey,
+    bold_italic_key: FontKey,
 
     /// 字体大小.
-    pub font_size: crossfont::Size,
+    font_size: crossfont::Size,
 
     /// 字体偏移.
     font_offset: Delta<i8>,
@@ -116,20 +94,10 @@ impl GlyphCache {
         Ok(metrics)
     }
 
-    fn load_glyphs_for_font<L: LoadGlyph>(&mut self, font: FontKey, loader: &mut L) {
-        let size = self.font_size;
-
+    fn load_glyphs_for_style(&mut self, flags: Flags, atlas: &mut GlyphAtlas) {
         // 缓存所有 ASCII 字符.
         for i in 32u8..=126u8 {
-            self.get(
-                GlyphKey {
-                    font_key: font,
-                    character: i as char,
-                    size,
-                },
-                loader,
-                true,
-            );
+            self.get(i as char, flags, atlas, true);
         }
     }
 
@@ -198,13 +166,32 @@ impl GlyphCache {
         FontDesc::new(desc.family.clone(), style)
     }
 
+    fn glyph_key(&self, character: char, flags: Flags) -> GlyphKey {
+        let font_key = match flags & Flags::BOLD_ITALIC {
+            Flags::BOLD_ITALIC => self.bold_italic_key,
+            Flags::ITALIC => self.italic_key,
+            Flags::BOLD => self.bold_key,
+            _ => self.font_key,
+        };
+
+        GlyphKey {
+            font_key,
+            character,
+            size: self.font_size,
+        }
+    }
+
     /// 从字体获取一个字形.
     ///
     /// 如果字形从未加载过, 将对其进行光栅化并插入缓存.
-    pub fn get<L>(&mut self, glyph_key: GlyphKey, loader: &mut L, show_missing: bool) -> Glyph
-    where
-        L: LoadGlyph + ?Sized,
-    {
+    pub(super) fn get(
+        &mut self,
+        character: char,
+        flags: Flags,
+        atlas: &mut GlyphAtlas,
+        show_missing: bool,
+    ) -> Glyph {
+        let glyph_key = self.glyph_key(character, flags);
         // 尝试从缓存中加载字形.
         if let Some(glyph) = self.cache.get(&glyph_key) {
             return *glyph;
@@ -225,7 +212,7 @@ impl GlyphCache {
             .map_or_else(|| self.rasterizer.get_glyph(glyph_key), Ok);
 
         let glyph = match rasterized {
-            Ok(rasterized) => self.load_glyph(loader, rasterized),
+            Ok(rasterized) => self.load_glyph(atlas, rasterized),
             // 加载缺失字形的备用字形.
             Err(RasterizerError::MissingGlyph(rasterized)) if show_missing => {
                 // 使用 `\0` 作为 "missing" 字形, 只缓存一次.
@@ -236,13 +223,13 @@ impl GlyphCache {
                 if let Some(glyph) = self.cache.get(&missing_key) {
                     *glyph
                 } else {
-                    let glyph = self.load_glyph(loader, rasterized);
+                    let glyph = self.load_glyph(atlas, rasterized);
                     self.cache.insert(missing_key, glyph);
 
                     glyph
                 }
             }
-            Err(_) => self.load_glyph(loader, Default::default()),
+            Err(_) => self.load_glyph(atlas, Default::default()),
         };
 
         // 缓存光栅化的字形.
@@ -252,10 +239,7 @@ impl GlyphCache {
     /// 将字形加载到 atlas 中.
     ///
     /// 在加载之前, 将应用为字形缓存定义的所有变换.
-    pub fn load_glyph<L>(&self, loader: &mut L, mut glyph: RasterizedGlyph) -> Glyph
-    where
-        L: LoadGlyph + ?Sized,
-    {
+    fn load_glyph(&self, atlas: &mut GlyphAtlas, mut glyph: RasterizedGlyph) -> Glyph {
         glyph.left += i32::from(self.glyph_offset.x);
         glyph.top += i32::from(self.glyph_offset.y);
         glyph.top -= self.metrics.descent as i32;
@@ -268,15 +252,15 @@ impl GlyphCache {
         }
 
         // 将字形添加到缓存.
-        loader.load_glyph(&glyph)
+        atlas.load_glyph(&glyph)
     }
 
-    /// 将 GL 和注册表中当前缓存的数据重置为默认状态.
-    pub fn reset_glyph_cache<L: LoadGlyph>(&mut self, loader: &mut L) {
-        loader.clear();
+    /// 将 atlas 和当前缓存的数据重置为默认状态.
+    pub(super) fn reset_glyph_cache(&mut self, atlas: &mut GlyphAtlas) {
+        atlas.clear();
         self.cache = Default::default();
 
-        self.load_common_glyphs(loader);
+        self.load_common_glyphs(atlas);
     }
 
     /// 更新内部字体大小.
@@ -311,10 +295,10 @@ impl GlyphCache {
     }
 
     /// 预取几乎肯定会被加载的字形.
-    pub fn load_common_glyphs<L: LoadGlyph>(&mut self, loader: &mut L) {
-        self.load_glyphs_for_font(self.font_key, loader);
-        self.load_glyphs_for_font(self.bold_key, loader);
-        self.load_glyphs_for_font(self.italic_key, loader);
-        self.load_glyphs_for_font(self.bold_italic_key, loader);
+    fn load_common_glyphs(&mut self, atlas: &mut GlyphAtlas) {
+        self.load_glyphs_for_style(Flags::empty(), atlas);
+        self.load_glyphs_for_style(Flags::BOLD, atlas);
+        self.load_glyphs_for_style(Flags::ITALIC, atlas);
+        self.load_glyphs_for_style(Flags::BOLD_ITALIC, atlas);
     }
 }

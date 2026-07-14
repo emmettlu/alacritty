@@ -886,6 +886,20 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
         self.spawn_daemon(&alacritty, &args);
     }
 
+    #[cfg(target_os = "macos")]
+    fn create_new_window(&mut self, window_tabbing_id: Option<String>) {
+        let mut options = WindowOptions::default();
+        options.window_tabbing_id = window_tabbing_id;
+
+        if let Err(err) = self
+            .event_proxy
+            .send_event(Event::new(EventType::CreateWindow(options), None))
+        {
+            debug!("Failed to send create-window event: {err:?}");
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
     fn create_new_window(&mut self) {
         if let Err(err) = self.event_proxy.send_event(Event::new(
             EventType::CreateWindow(WindowOptions::default()),

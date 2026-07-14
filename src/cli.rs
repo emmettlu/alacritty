@@ -246,6 +246,12 @@ pub struct WindowOptions {
     #[clap(flatten)]
     pub window_identity: WindowIdentity,
 
+    /// Identifier used to group windows into tabs on macOS.
+    #[cfg(target_os = "macos")]
+    #[serde(default)]
+    #[clap(skip)]
+    pub window_tabbing_id: Option<String>,
+
     /// Override configuration file options [example: 'cursor.style=\"Beam\"'].
     #[clap(short = 'o', long, num_args = 1..)]
     option: Vec<String>,
