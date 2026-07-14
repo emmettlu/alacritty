@@ -1,7 +1,9 @@
 //! Terminal window context.
 
 use std::error::Error;
+#[cfg(feature = "ref-tests")]
 use std::fs::File;
+#[cfg(feature = "ref-tests")]
 use std::io::Write;
 #[cfg(unix)]
 use std::mem;
@@ -9,7 +11,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
-use log::{error, info};
+#[cfg(feature = "ref-tests")]
+use log::error;
+use log::info;
+#[cfg(feature = "ref-tests")]
 use serde_json as json;
 use winit::event::{Event as WinitEvent, Modifiers, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
@@ -20,6 +25,7 @@ use crate::terminal::event_loop::{EventLoop as PtyEventLoop, Msg, Notifier};
 use crate::terminal::grid::{Dimensions, Scroll};
 use crate::terminal::index::Direction;
 use crate::terminal::sync::FairMutex;
+#[cfg(feature = "ref-tests")]
 use crate::terminal::term::TermSize;
 use crate::terminal::term::{Term, TermMode};
 use crate::terminal::tty;
@@ -158,6 +164,7 @@ impl WindowContext {
             event_proxy.clone(),
             pty,
             pty_config.drain_on_exit,
+            #[cfg(feature = "ref-tests")]
             config.debug.ref_test,
         )?;
 
@@ -435,6 +442,7 @@ impl WindowContext {
     }
 
     /// Write the ref test results to the disk.
+    #[cfg(feature = "ref-tests")]
     pub fn write_ref_test_results(&self) {
         // Dump grid state.
         let mut grid = self.terminal.lock().grid().clone();

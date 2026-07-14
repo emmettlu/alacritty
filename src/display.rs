@@ -340,6 +340,8 @@ pub struct Display {
 
     glyph_cache: GlyphCache,
     renderable_cells: Vec<RenderableCell>,
+    render_lines: RenderLines,
+    render_rects: Vec<RenderRect>,
     meter: Meter,
 }
 
@@ -438,6 +440,8 @@ impl Display {
             pending_update: Default::default(),
             cursor_hidden: Default::default(),
             renderable_cells: Default::default(),
+            render_lines: Default::default(),
+            render_rects: Default::default(),
             meter: Default::default(),
             ime: Default::default(),
         })
@@ -636,7 +640,8 @@ impl Display {
             }
         };
 
-        let mut lines = RenderLines::new();
+        let mut lines = mem::take(&mut self.render_lines);
+        lines.clear();
 
         let has_highlighted_hint =
             self.highlighted_hint.is_some() || self.vi_highlighted_hint.is_some();
@@ -678,7 +683,10 @@ impl Display {
             self.renderable_cells = grid_cells;
         }
 
-        let mut rects = lines.rects(&metrics, &size_info);
+        let mut rects = mem::take(&mut self.render_rects);
+        rects.clear();
+        lines.append_rects(&mut rects, &metrics, &size_info);
+        self.render_lines = lines;
 
         if let Some(vi_cursor_point) = vi_cursor_point {
             let line = (-vi_cursor_point.line.0 + size_info.bottommost_line().0) as usize;
@@ -810,6 +818,7 @@ impl Display {
             background_color,
             config.window_opacity(),
         );
+        self.render_rects = rects;
 
         // 通知 winit 即将 present.
         self.window.pre_present_notify();

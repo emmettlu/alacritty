@@ -3,17 +3,22 @@
 // CPU 侧每个实例对应一个待绘制的 cell/glyph. 同一份实例数据会被背景 pass
 // (`vs_bg`/`fs_bg`) 和字形 pass (`vs_text`/`fs_text`) 复用.
 
-struct Uniforms {
+struct FrameUniforms {
     // projection.xy 是内容区域左上角对应的 clip-space 偏移.
     // projection.zw 把内容区域内的像素坐标缩放到 clip-space.
     projection: vec4<f32>,
 
     // 单个终端 cell 的像素尺寸.
     cell_dim: vec2<f32>,
+    padding: vec2<f32>,
+    underline_position: f32,
+    underline_thickness: f32,
+    undercurl_position: f32,
+    _pad: f32,
 }
 
 @group(0) @binding(0)
-var<uniform> uniforms: Uniforms;
+var<uniform> uniforms: FrameUniforms;
 
 // 字形 atlas. 背景 pass 不采样它, 但为了复用 pipeline layout 仍绑定同一组资源.
 @group(1) @binding(0)

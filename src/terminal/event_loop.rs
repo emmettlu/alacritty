@@ -51,6 +51,7 @@ pub struct EventLoop<T: tty::EventedPty, U: EventListener> {
     terminal: Arc<FairMutex<Term<U>>>,
     event_proxy: U,
     drain_on_exit: bool,
+    #[cfg(feature = "ref-tests")]
     ref_test: bool,
 }
 
@@ -65,7 +66,7 @@ where
         event_proxy: U,
         pty: T,
         drain_on_exit: bool,
-        ref_test: bool,
+        #[cfg(feature = "ref-tests")] ref_test: bool,
     ) -> io::Result<EventLoop<T, U>> {
         let (tx, rx) = mpsc::channel();
         let poll = polling::Poller::new()?.into();
@@ -77,6 +78,7 @@ where
             terminal,
             event_proxy,
             drain_on_exit,
+            #[cfg(feature = "ref-tests")]
             ref_test,
         })
     }
@@ -108,11 +110,16 @@ where
         &mut self,
         state: &mut State,
         buf: &mut [u8],
-        mut writer: Option<&mut X>,
+        writer: Option<&mut X>,
     ) -> io::Result<()>
     where
         X: Write,
     {
+        #[cfg(feature = "ref-tests")]
+        let mut writer = writer;
+        #[cfg(not(feature = "ref-tests"))]
+        let _ = writer;
+
         let mut unprocessed = 0;
         let mut processed = 0;
 
@@ -149,18 +156,20 @@ where
             };
 
             // Write a copy of the bytes to the ref test file.
-            let write_failed =
-                writer
-                    .as_mut()
-                    .is_some_and(|writer| match writer.write_all(&buf[..unprocessed]) {
+            #[cfg(feature = "ref-tests")]
+            {
+                let write_failed = writer.as_mut().is_some_and(|writer| {
+                    match writer.write_all(&buf[..unprocessed]) {
                         Ok(()) => false,
                         Err(err) => {
                             error!("Failed to write ref-test recording: {err}");
                             true
                         }
-                    });
-            if write_failed {
-                writer = None;
+                    }
+                });
+                if write_failed {
+                    writer = None;
+                }
             }
 
             // Parse the incoming bytes.
@@ -231,6 +240,7 @@ where
 
             let mut events = Events::with_capacity(NonZeroUsize::new(1024).unwrap());
 
+            #[cfg(feature = "ref-tests")]
             let mut pipe = if self.ref_test {
                 match File::create("./alacritty.recording") {
                     Ok(file) => Some(file),
@@ -242,6 +252,8 @@ where
             } else {
                 None
             };
+            #[cfg(not(feature = "ref-tests"))]
+            let mut pipe: Option<File> = None;
 
             'event_loop: loop {
                 // Wakeup the event loop when a synchronized update timeout was reached.

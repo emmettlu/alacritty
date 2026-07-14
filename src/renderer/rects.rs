@@ -184,20 +184,25 @@ pub(crate) struct RenderLines {
 
 impl RenderLines {
     #[inline]
-    pub(crate) fn new() -> Self {
-        Self::default()
+    pub(crate) fn clear(&mut self) {
+        for lines in &mut self.inner {
+            lines.clear();
+        }
     }
 
     #[inline]
-    pub(crate) fn rects(&self, metrics: &Metrics, size: &SizeInfo) -> Vec<RenderRect> {
-        let line_count = self.inner.iter().map(Vec::len).sum();
-        let mut rects = Vec::with_capacity(line_count);
+    pub(crate) fn append_rects(
+        &self,
+        rects: &mut Vec<RenderRect>,
+        metrics: &Metrics,
+        size: &SizeInfo,
+    ) {
+        rects.reserve(self.inner.iter().map(Vec::len).sum());
         for (flag, lines) in LINE_FLAGS.into_iter().zip(&self.inner) {
             for line in lines {
-                line.push_rects(&mut rects, flag, metrics, size);
+                line.push_rects(rects, flag, metrics, size);
             }
         }
-        rects
     }
 
     /// Update the stored lines with the next cell info.

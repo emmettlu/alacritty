@@ -26,6 +26,7 @@ pub struct Options {
     pub print_events: bool,
 
     /// Generates ref test.
+    #[cfg(feature = "ref-tests")]
     #[cfg_attr(unix, clap(long, conflicts_with("daemon")))]
     #[cfg_attr(not(unix), clap(long))]
     pub ref_test: bool,
@@ -85,7 +86,10 @@ impl Options {
 
         config.debug.print_events |= self.print_events;
         config.debug.log_level = max(config.debug.log_level, self.log_level());
-        config.debug.ref_test |= self.ref_test;
+        #[cfg(feature = "ref-tests")]
+        {
+            config.debug.ref_test |= self.ref_test;
+        }
 
         if config.debug.print_events {
             config.debug.log_level = max(config.debug.log_level, LevelFilter::Info);

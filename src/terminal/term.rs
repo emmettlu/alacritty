@@ -2546,12 +2546,14 @@ impl<'a> RenderableContent<'a> {
     }
 }
 
+#[cfg(feature = "ref-tests")]
 #[derive(Serialize, Deserialize)]
 pub struct TermSize {
     pub columns: usize,
     pub screen_lines: usize,
 }
 
+#[cfg(feature = "ref-tests")]
 impl TermSize {
     pub fn new(columns: usize, screen_lines: usize) -> Self {
         Self {
@@ -2561,6 +2563,7 @@ impl TermSize {
     }
 }
 
+#[cfg(feature = "ref-tests")]
 impl Dimensions for TermSize {
     fn total_lines(&self) -> usize {
         self.screen_lines()

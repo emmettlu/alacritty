@@ -412,6 +412,7 @@ impl ApplicationHandler<Event> for Processor {
                 // Shutdown if no more terminals are open.
                 if self.windows.is_empty() && !self.cli_options.daemon() {
                     // Write ref tests of last window to disk.
+                    #[cfg(feature = "ref-tests")]
                     if self.config.debug.ref_test {
                         window_context.write_ref_test_results();
                     }

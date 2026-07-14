@@ -19,6 +19,7 @@ pub struct Debug {
     pub highlight_damage: bool,
 
     /// Record ref test.
+    #[cfg(feature = "ref-tests")]
     #[serde(skip)]
     pub ref_test: bool,
 }
@@ -31,6 +32,7 @@ impl Default for Debug {
             persistent_logging: Default::default(),
             render_timer: Default::default(),
             highlight_damage: Default::default(),
+            #[cfg(feature = "ref-tests")]
             ref_test: Default::default(),
         }
     }

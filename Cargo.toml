@@ -4,28 +4,40 @@ version = "0.18.0"
 edition = "2024"
 readme = "README.md"
 
+[features]
+ref-tests = ["dep:serde_json"]
+
 [dependencies]
 base64 = "0"
 bitflags = { version = "2", features = ["serde"] }
 bytemuck = { version = "1", features = ["derive"] }
-clap = { version = "4", features = ["derive", "env"] }
+clap = { version = "4", default-features = false, features = [
+  "derive",
+  "error-context",
+  "help",
+  "std",
+  "usage",
+] }
 crossfont = "0"
 dirs = "6"
 log = { version = "0", features = ["serde", "std"] }
 polling = "3"
 pollster = "1"
-regex-automata = "0"
+regex-automata = { version = "0", default-features = false, features = [
+  "hybrid",
+  "perf-inline",
+  "std",
+  "syntax",
+  "unicode",
+] }
 rustc-hash = "2"
 serde = { version = "1", features = ["derive", "rc"] }
-serde_json = "1"
-toml = "1"
+toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
 unicode-width = "0"
 vte = { version = "0", default-features = false, features = ["ansi", "serde", "std"] }
 
-[dev-dependencies]
-clap_complete = "4"
-
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+serde_json = "1"
 rustix = { version = "1", default-features = false, features = [
   "event",
   "fs",
@@ -47,6 +59,7 @@ winit = { version = "0", default-features = false, features = [
 x11rb = { version = "0", features = ["all-extensions"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+serde_json = "1"
 rustix = { version = "1", default-features = false, features = [
   "event",
   "fs",
@@ -60,11 +73,10 @@ wgpu = { version = "30", default-features = false, features = ["metal", "std", "
 winit = { version = "0", default-features = false, features = ["rwh_06", "serde"] }
 
 [target.'cfg(windows)'.dependencies]
+serde_json = { version = "1", optional = true }
 wgpu = { version = "30", default-features = false, features = ["dx12", "std", "wgsl"] }
 windows-sys = { version = "0", features = [
   "Win32_Foundation",
-  "Win32_Graphics_Dwm",
-  "Win32_Graphics_Gdi",
   "Win32_Security",
   "Win32_Storage_FileSystem",
   "Win32_System_Console",
@@ -76,6 +88,5 @@ windows-sys = { version = "0", features = [
   "Win32_System_Pipes",
   "Win32_System_Threading",
   "Win32_System_WindowsProgramming",
-  "Win32_UI_WindowsAndMessaging",
 ] }
 winit = { version = "0", default-features = false, features = ["rwh_06", "serde"] }

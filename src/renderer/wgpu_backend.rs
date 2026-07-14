@@ -14,7 +14,7 @@ use crate::display::SizeInfo;
 use crate::display::color::{Rgb, srgb_byte_to_linear};
 use crate::display::content::RenderableCell;
 use crate::renderer::Error;
-use crate::renderer::rects::RenderRect;
+use crate::renderer::rects::{RectKind, RenderRect};
 
 mod atlas;
 mod builtin_font;
@@ -98,49 +98,41 @@ enum TextDrawCommand {
     },
 }
 
-/// 文本 uniform 数据
+/// Per-frame uniforms shared by text and rectangle pipelines.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct TextUniforms {
+struct FrameUniforms {
     // projection: offset_x, offset_y, scale_x, scale_y
     projection: [f32; 4],
     // cell_dim: cell_width, cell_height
     cell_dim: [f32; 2],
-    _pad: [f32; 2],
-}
-
-/// 矩形顶点数据
-#[repr(C)]
-#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct RectVertex {
-    // NDC 坐标
-    x: f32,
-    y: f32,
-    // 颜色 (归一化)
-    r: f32,
-    g: f32,
-    b: f32,
-    a: f32,
-}
-
-/// 矩形 uniform 数据
-#[repr(C)]
-#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct RectUniforms {
-    cell_width: f32,
-    cell_height: f32,
-    padding_x: f32,
-    padding_y: f32,
+    // Content viewport origin in framebuffer pixels.
+    padding: [f32; 2],
     underline_position: f32,
     underline_thickness: f32,
     undercurl_position: f32,
     _pad: f32,
 }
 
+/// Per-rectangle instance data consumed by the rectangle vertex shader.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct RectInstanceData {
+    // x, y, width, height in content-viewport pixels.
+    position_size: [f32; 4],
+    // Linear RGBA.
+    color: [f32; 4],
+    kind: u32,
+}
+
+const _: () = assert!(std::mem::size_of::<FrameUniforms>() == 48);
+const _: () = assert!(std::mem::size_of::<RectInstanceData>() == 36);
+
 /// 初始文本实例 buffer 容量.
 ///
 /// 超出时会按需扩容, 避免启动时为极端场景固定分配 0x1_0000 个实例的 GPU buffer.
 const INITIAL_INSTANCE_CAPACITY: usize = 8192;
+const INITIAL_RECT_INSTANCE_CAPACITY: usize = 1024;
 
 /// Rendering glyph flags - 与着色器保持同步
 const COLORED_FLAG: u32 = 1;
@@ -183,8 +175,8 @@ pub(crate) struct WgpuRenderer {
     // -- 文本渲染管线 --
     text_bg_pipeline: wgpu::RenderPipeline,
     text_fg_pipeline: wgpu::RenderPipeline,
-    text_uniform_buffer: wgpu::Buffer,
-    text_uniform_bind_group: wgpu::BindGroup,
+    frame_uniform_buffer: wgpu::Buffer,
+    frame_uniform_bind_group: wgpu::BindGroup,
     text_instance_buffer: wgpu::Buffer,
     text_instance_buffer_capacity: usize,
     text_batches: [Vec<TextBatch>; 2],
@@ -193,12 +185,9 @@ pub(crate) struct WgpuRenderer {
     text_draw_commands: [Vec<TextDrawCommand>; 2],
 
     // -- 矩形渲染管线 --
-    rect_pipelines: [wgpu::RenderPipeline; 4], // normal, undercurl, dotted, dashed
-    rect_uniform_buffer: wgpu::Buffer,
-    rect_uniform_bind_group: wgpu::BindGroup,
-    rect_vertex_buffer: wgpu::Buffer,
-    rect_vertices: Vec<RectVertex>,
-    rect_ranges: [Option<Range<u32>>; 4],
+    rect_pipeline: wgpu::RenderPipeline,
+    rect_instance_buffer: wgpu::Buffer,
+    rect_instances: Vec<RectInstanceData>,
 
     // -- Atlas / 字形管理 --
     glyph_atlas: GlyphAtlas,
@@ -264,16 +253,16 @@ impl WgpuRenderer {
         });
 
         // 文本 uniform 共享一个 buffer (bg 和 text 内容相同)
-        let text_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("text_uniform_buffer"),
-            size: std::mem::size_of::<TextUniforms>() as u64,
+        let frame_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("frame_uniform_buffer"),
+            size: std::mem::size_of::<FrameUniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let text_uniform_bind_group_layout =
+        let frame_uniform_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("text_uniform_bind_group_layout"),
+                label: Some("frame_uniform_bind_group_layout"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
@@ -286,12 +275,12 @@ impl WgpuRenderer {
                 }],
             });
 
-        let text_uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("text_uniform_bind_group"),
-            layout: &text_uniform_bind_group_layout,
+        let frame_uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("frame_uniform_bind_group"),
+            layout: &frame_uniform_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: text_uniform_buffer.as_entire_binding(),
+                resource: frame_uniform_buffer.as_entire_binding(),
             }],
         });
 
@@ -336,7 +325,7 @@ impl WgpuRenderer {
         let text_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("text_pipeline_layout"),
             bind_group_layouts: &[
-                Some(&text_uniform_bind_group_layout),
+                Some(&frame_uniform_bind_group_layout),
                 Some(&text_texture_bind_group_layout),
             ],
             immediate_size: 0,
@@ -451,98 +440,66 @@ impl WgpuRenderer {
             source: wgpu::ShaderSource::Wgsl(RECT_SHADER.into()),
         });
 
-        let rect_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("rect_uniform_buffer"),
-            size: std::mem::size_of::<RectUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let rect_uniform_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("rect_uniform_bind_group_layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-
-        let rect_uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("rect_uniform_bind_group"),
-            layout: &rect_uniform_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: rect_uniform_buffer.as_entire_binding(),
-            }],
-        });
-
         let rect_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("rect_pipeline_layout"),
-            bind_group_layouts: &[Some(&rect_uniform_bind_group_layout)],
+            bind_group_layouts: &[Some(&frame_uniform_bind_group_layout)],
             immediate_size: 0,
         });
 
-        let rect_vertex_layout = Some(wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<RectVertex>() as u64,
-            step_mode: wgpu::VertexStepMode::Vertex,
+        let rect_instance_layout = Some(wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<RectInstanceData>() as u64,
+            step_mode: wgpu::VertexStepMode::Instance,
             attributes: &[
-                // position
                 wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x2,
+                    format: wgpu::VertexFormat::Float32x4,
                     offset: 0,
                     shader_location: 0,
                 },
-                // color
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x4,
-                    offset: 8,
+                    offset: 16,
                     shader_location: 1,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Uint32,
+                    offset: 32,
+                    shader_location: 2,
                 },
             ],
         });
 
-        let fs_entries = ["fs_normal", "fs_undercurl", "fs_dotted", "fs_dashed"];
-        let rect_pipelines = std::array::from_fn(|i| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(&format!("rect_pipeline_{}", fs_entries[i])),
-                layout: Some(&rect_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &rect_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: std::slice::from_ref(&rect_vertex_layout),
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &rect_shader,
-                    entry_point: Some(fs_entries[i]),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: surface_format,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
-                cache: None,
-            })
+        let rect_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("rect_pipeline"),
+            layout: Some(&rect_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &rect_shader,
+                entry_point: Some("vs_main"),
+                buffers: std::slice::from_ref(&rect_instance_layout),
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &rect_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
         });
 
-        // 矩形顶点 buffer - 预分配较大空间
-        let rect_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("rect_vertex_buffer"),
-            size: (4096 * std::mem::size_of::<RectVertex>()) as u64,
+        let rect_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("rect_instance_buffer"),
+            size: (INITIAL_RECT_INSTANCE_CAPACITY * std::mem::size_of::<RectInstanceData>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -569,8 +526,8 @@ impl WgpuRenderer {
 
             text_bg_pipeline,
             text_fg_pipeline,
-            text_uniform_buffer,
-            text_uniform_bind_group,
+            frame_uniform_buffer,
+            frame_uniform_bind_group,
             text_instance_buffer,
             text_instance_buffer_capacity: INITIAL_INSTANCE_CAPACITY,
             text_batches: Default::default(),
@@ -578,12 +535,9 @@ impl WgpuRenderer {
             text_instances: Vec::new(),
             text_draw_commands: Default::default(),
 
-            rect_pipelines,
-            rect_uniform_buffer,
-            rect_uniform_bind_group,
-            rect_vertex_buffer,
-            rect_vertices: Vec::new(),
-            rect_ranges: Default::default(),
+            rect_pipeline,
+            rect_instance_buffer,
+            rect_instances: Vec::new(),
 
             glyph_atlas,
         })
@@ -794,8 +748,9 @@ impl WgpuRenderer {
         clear_color: Rgb,
         clear_alpha: f32,
     ) {
-        self.prepare_text(size_info);
-        let has_rects = self.prepare_rects(size_info, metrics, rects);
+        self.update_frame_uniforms(size_info, metrics);
+        self.prepare_text();
+        self.prepare_rects(rects);
         let clear_color = Self::clear_color(clear_color, clear_alpha);
 
         let mut rpass = frame
@@ -831,7 +786,7 @@ impl WgpuRenderer {
             &self.text_draw_commands[TextLayer::BeforeRects.index()],
             &mut rpass,
         );
-        if has_rects {
+        if !self.rect_instances.is_empty() {
             self.render_rects(&mut rpass);
         }
         self.render_text_layer(
@@ -950,16 +905,12 @@ impl WgpuRenderer {
     }
 
     /// Flatten and upload all text queued for the current frame.
-    fn prepare_text(&mut self, size_info: &SizeInfo) {
+    fn prepare_text(&mut self) {
         self.flatten_text_batches();
         let total_instances = self.text_instances.len();
         if total_instances == 0 {
             return;
         }
-
-        let uniforms = self.compute_text_uniforms(size_info);
-        self.queue
-            .write_buffer(&self.text_uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         self.ensure_text_instance_buffer_capacity(total_instances);
         self.queue.write_buffer(
@@ -1017,7 +968,7 @@ impl WgpuRenderer {
             return;
         }
 
-        rpass.set_bind_group(0, &self.text_uniform_bind_group, &[]);
+        rpass.set_bind_group(0, &self.frame_uniform_bind_group, &[]);
         rpass.set_vertex_buffer(0, self.text_instance_buffer.slice(..));
 
         let mut foreground_pipeline_active = false;
@@ -1119,19 +1070,19 @@ impl WgpuRenderer {
         }
     }
 
-    fn compute_text_uniforms(&self, size: &SizeInfo) -> TextUniforms {
+    fn update_frame_uniforms(&self, size: &SizeInfo, metrics: &Metrics) {
         let (_, _, drawable_width, drawable_height) = Self::content_viewport(size);
-
-        let scale_x = 2. / drawable_width;
-        let scale_y = -2. / drawable_height;
-        let offset_x = -1.;
-        let offset_y = 1.;
-
-        TextUniforms {
-            projection: [offset_x, offset_y, scale_x, scale_y],
+        let uniforms = FrameUniforms {
+            projection: [-1.0, 1.0, 2.0 / drawable_width, -2.0 / drawable_height],
             cell_dim: [size.cell_width(), size.cell_height()],
-            _pad: [0.0; 2],
-        }
+            padding: [size.padding_x(), size.padding_y()],
+            underline_position: metrics.descent.abs() - metrics.underline_position.abs(),
+            underline_thickness: metrics.underline_thickness,
+            undercurl_position: (0.5 * metrics.descent).abs(),
+            _pad: 0.0,
+        };
+        self.queue
+            .write_buffer(&self.frame_uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
     }
 
     /// 将字符串加入指定文本层, 不立即录制绘制命令.
@@ -1169,143 +1120,65 @@ impl WgpuRenderer {
         self.queue_cells(layer, glyph_cache, cells);
     }
 
-    /// Build and upload all rectangle vertices for the current frame.
-    fn prepare_rects(
-        &mut self,
-        size_info: &SizeInfo,
-        metrics: &Metrics,
-        rects: &[RenderRect],
-    ) -> bool {
-        self.rect_vertices.clear();
-        self.rect_ranges.fill(None);
-        if rects.is_empty() {
-            return false;
+    /// Build and upload rectangle instances for the current frame.
+    fn prepare_rects(&mut self, rects: &[RenderRect]) {
+        self.rect_instances.clear();
+        self.rect_instances.reserve(rects.len());
+
+        // Preserve the existing painter order, with normal rectangles on top.
+        for kind in [
+            RectKind::DashedUnderline,
+            RectKind::DottedUnderline,
+            RectKind::Undercurl,
+            RectKind::Normal,
+        ] {
+            self.rect_instances.extend(
+                rects
+                    .iter()
+                    .filter(|rect| rect.kind == kind)
+                    .map(Self::create_rect_instance),
+            );
         }
 
-        // 矩形和文本必须使用同一套内容区域投影, 否则 hollow cursor 等矩形会随行号
-        // 逐渐偏离文本位置.
-        let (_, _, drawable_width, drawable_height) = Self::content_viewport(size_info);
-        let half_width = drawable_width / 2.;
-        let half_height = drawable_height / 2.;
-
-        self.rect_vertices.reserve(rects.len().saturating_mul(6));
-        // 逆序分组, 保证普通矩形最后绘制在最上层.
-        for kind_index in (0..self.rect_ranges.len()).rev() {
-            let start = self.rect_vertices.len() as u32;
-            for rect in rects.iter().filter(|rect| rect.kind as usize == kind_index) {
-                Self::add_rect_vertices(&mut self.rect_vertices, half_width, half_height, rect);
-            }
-            let end = self.rect_vertices.len() as u32;
-            if start != end {
-                self.rect_ranges[kind_index] = Some(start..end);
-            }
+        if self.rect_instances.is_empty() {
+            return;
         }
 
-        if self.rect_vertices.is_empty() {
-            return false;
-        }
-
-        let position = (0.5 * metrics.descent).abs();
-        let underline_position = metrics.descent.abs() - metrics.underline_position.abs();
-        let rect_uniforms = RectUniforms {
-            cell_width: size_info.cell_width(),
-            cell_height: size_info.cell_height(),
-            padding_x: size_info.padding_x(),
-            padding_y: size_info.padding_y(),
-            underline_position,
-            underline_thickness: metrics.underline_thickness,
-            undercurl_position: position,
-            _pad: 0.0,
-        };
-        self.queue.write_buffer(
-            &self.rect_uniform_buffer,
-            0,
-            bytemuck::bytes_of(&rect_uniforms),
-        );
-
-        let needed_size = (self.rect_vertices.len() * std::mem::size_of::<RectVertex>()) as u64;
-        if needed_size > self.rect_vertex_buffer.size() {
-            self.rect_vertex_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("rect_vertex_buffer_resized"),
+        let needed_size =
+            (self.rect_instances.len() * std::mem::size_of::<RectInstanceData>()) as u64;
+        if needed_size > self.rect_instance_buffer.size() {
+            self.rect_instance_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("rect_instance_buffer_resized"),
                 size: needed_size.next_power_of_two(),
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
         }
         self.queue.write_buffer(
-            &self.rect_vertex_buffer,
+            &self.rect_instance_buffer,
             0,
-            bytemuck::cast_slice(&self.rect_vertices),
+            bytemuck::cast_slice(&self.rect_instances),
         );
-
-        true
     }
 
     fn render_rects<'pass>(&'pass self, rpass: &mut wgpu::RenderPass<'pass>) {
-        rpass.set_bind_group(0, &self.rect_uniform_bind_group, &[]);
-        rpass.set_vertex_buffer(0, self.rect_vertex_buffer.slice(..));
-        for kind_index in (0..self.rect_ranges.len()).rev() {
-            let Some(range) = &self.rect_ranges[kind_index] else {
-                continue;
-            };
-            rpass.set_pipeline(&self.rect_pipelines[kind_index]);
-            rpass.draw(range.clone(), 0..1);
-        }
+        rpass.set_pipeline(&self.rect_pipeline);
+        rpass.set_bind_group(0, &self.frame_uniform_bind_group, &[]);
+        rpass.set_vertex_buffer(0, self.rect_instance_buffer.slice(..));
+        rpass.draw(0..6, 0..self.rect_instances.len() as u32);
     }
 
-    fn add_rect_vertices(
-        vertices: &mut Vec<RectVertex>,
-        half_width: f32,
-        half_height: f32,
-        rect: &RenderRect,
-    ) {
-        // NDC 范围从 -1 到 +1, Y 轴向上.
-        let x = rect.x / half_width - 1.0;
-        let y = -rect.y / half_height + 1.0;
-        let width = rect.width / half_width;
-        let height = rect.height / half_height;
-        let (r, g, b) = rect.color.as_tuple();
-        let a = rect.alpha;
-        // 将 sRGB 颜色转换为线性空间
-        let r = srgb_to_linear_f32(r);
-        let g = srgb_to_linear_f32(g);
-        let b = srgb_to_linear_f32(b);
-
-        // 两个三角形构成一个四边形
-        let quad = [
-            RectVertex { x, y, r, g, b, a },
-            RectVertex {
-                x,
-                y: y - height,
-                r,
-                g,
-                b,
-                a,
-            },
-            RectVertex {
-                x: x + width,
-                y,
-                r,
-                g,
-                b,
-                a,
-            },
-            RectVertex {
-                x: x + width,
-                y: y - height,
-                r,
-                g,
-                b,
-                a,
-            },
-        ];
-
-        vertices.push(quad[0]);
-        vertices.push(quad[1]);
-        vertices.push(quad[2]);
-        vertices.push(quad[2]);
-        vertices.push(quad[3]);
-        vertices.push(quad[1]);
+    fn create_rect_instance(rect: &RenderRect) -> RectInstanceData {
+        RectInstanceData {
+            position_size: [rect.x, rect.y, rect.width, rect.height],
+            color: [
+                srgb_to_linear_f32(rect.color.r),
+                srgb_to_linear_f32(rect.color.g),
+                srgb_to_linear_f32(rect.color.b),
+                rect.alpha,
+            ],
+            kind: rect.kind as u32,
+        }
     }
 
     /// 清空 atlas 并使用当前字体配置重新预取常用字形.

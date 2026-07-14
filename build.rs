@@ -1,10 +1,7 @@
 use std::env;
-use std::process::Command;
 #[cfg(windows)]
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::PathBuf;
+use std::process::Command;
 
 fn main() {
     let mut version = String::from(env!("CARGO_PKG_VERSION"));
@@ -14,10 +11,7 @@ fn main() {
     println!("cargo:rustc-env=VERSION={version}");
 
     #[cfg(windows)]
-    {
-        copy_dxc_runtime();
-        compile_windows_resource();
-    }
+    compile_windows_resource();
 }
 
 #[cfg(windows)]
@@ -54,41 +48,6 @@ fn compile_windows_resource() {
     }
 
     panic!("failed to compile Windows resources; install rc.exe or llvm-rc");
-}
-
-#[cfg(windows)]
-fn copy_dxc_runtime() {
-    const DXC_DIR_ENV: &str = "ALACRITTY_DXC_DIR";
-
-    println!("cargo:rerun-if-env-changed={DXC_DIR_ENV}");
-
-    let Some(out_dir) = env::var_os("OUT_DIR").map(PathBuf::from) else {
-        return;
-    };
-
-    let Some(profile_dir) = out_dir.ancestors().nth(3).map(Path::to_path_buf) else {
-        return;
-    };
-
-    let Some(dxc_dir) = env::var_os(DXC_DIR_ENV).map(PathBuf::from) else {
-        return;
-    };
-    if !dxc_dir.is_dir() {
-        return;
-    }
-
-    for dll in ["dxcompiler.dll", "dxil.dll"] {
-        let src = dxc_dir.join(dll);
-        let dst = profile_dir.join(dll);
-        println!("cargo:rerun-if-changed={}", src.display());
-        if let Err(err) = fs::copy(&src, &dst) {
-            println!(
-                "cargo:warning=Failed to copy {} to {}: {err}",
-                src.display(),
-                dst.display()
-            );
-        }
-    }
 }
 
 fn commit_hash() -> Option<String> {

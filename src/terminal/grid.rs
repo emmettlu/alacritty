@@ -389,6 +389,7 @@ impl<T> Grid<T> {
     }
 
     /// This is used only for initializing after loading ref-tests.
+    #[cfg(feature = "ref-tests")]
     #[inline]
     pub fn initialize_all(&mut self)
     where
@@ -403,6 +404,7 @@ impl<T> Grid<T> {
     }
 
     /// This is used only for truncating before saving ref-tests.
+    #[cfg(feature = "ref-tests")]
     #[inline]
     pub fn truncate(&mut self) {
         self.raw.truncate();
