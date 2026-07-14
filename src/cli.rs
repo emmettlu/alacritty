@@ -1,12 +1,14 @@
 use std::cmp::max;
 use std::collections::HashMap;
+use std::fmt;
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
+use std::process;
 use std::rc::Rc;
 
 use crate::config_compat::SerdeReplace;
-use clap::{ArgAction, Args, Parser, ValueHint};
 use log::{LevelFilter, error};
+use nanoargs::{ArgBuilder, ArgParser, Flag, Opt, ParseError};
 use serde::{Deserialize, Serialize};
 use toml::Value;
 
@@ -18,60 +20,187 @@ use crate::config::window::{Class, Identity};
 use crate::logging::LOG_TARGET_IPC_CONFIG;
 
 /// CLI options for the main Alacritty executable.
-#[derive(Parser, Default, Debug)]
-#[clap(author, about, version = env!("VERSION"))]
+#[derive(Default, Debug)]
 pub struct Options {
     /// Print all events to STDOUT.
-    #[clap(long)]
     pub print_events: bool,
 
     /// Generates ref test.
     #[cfg(feature = "ref-tests")]
-    #[cfg_attr(unix, clap(long, conflicts_with("daemon")))]
-    #[cfg_attr(not(unix), clap(long))]
     pub ref_test: bool,
 
     /// Window ID to embed Alacritty within (decimal or hexadecimal with "0x" prefix).
     #[cfg(all(unix, not(target_os = "macos")))]
-    #[clap(long)]
     pub embed: Option<String>,
 
     /// Specify alternative configuration file [default: %APPDATA%\alacritty\alacritty.toml].
-    #[clap(long, value_hint = ValueHint::FilePath)]
     pub config_file: Option<PathBuf>,
 
     /// Reduces the level of verbosity (the min level is -qq).
-    #[clap(short, conflicts_with("verbose"), action = ArgAction::Count)]
     quiet: u8,
 
     /// Increases the level of verbosity (the max level is -vvv).
-    #[clap(short, conflicts_with("quiet"), action = ArgAction::Count)]
     verbose: u8,
 
     /// Do not spawn an initial window.
     #[cfg(unix)]
-    #[clap(long)]
     pub daemon: bool,
 
     /// IPC socket path.
     #[cfg(unix)]
-    #[clap(long)]
     pub socket: Option<PathBuf>,
 
     /// CLI options for config overrides.
-    #[clap(skip)]
     pub config_options: ParsedOptions,
 
     /// Options which can be passed when creating a new window.
-    #[clap(flatten)]
     pub window_options: WindowOptions,
 }
 
 impl Options {
     pub fn new() -> Self {
-        let mut options = Self::parse();
-        options.config_options = options.window_options.config_overrides();
-        options
+        let args = std::env::args_os()
+            .skip(1)
+            .map(|arg| {
+                arg.into_string()
+                    .map_err(|arg| CliError::Value(arg.to_string_lossy().into_owned()))
+            })
+            .collect::<Result<Vec<_>, _>>();
+
+        match args.and_then(Self::parse) {
+            Ok(options) => options,
+            Err(CliError::Parse(ParseError::HelpRequested(help))) => {
+                println!("{help}");
+                process::exit(0);
+            }
+            Err(CliError::Parse(ParseError::VersionRequested(version))) => {
+                println!("{version}");
+                process::exit(0);
+            }
+            Err(err) => {
+                eprintln!("error: {err}");
+                process::exit(2);
+            }
+        }
+    }
+
+    fn parser() -> ArgParser {
+        let parser = ArgBuilder::new()
+            .name("alacritty")
+            .description("A fast, cross-platform terminal emulator")
+            .version(env!("VERSION"))
+            .flag(Flag::new("print-events").desc("Print all events to stdout"))
+            .flag(Flag::new("quiet").short('q').desc("Reduce log verbosity"))
+            .flag(
+                Flag::new("verbose")
+                    .short('v')
+                    .desc("Increase log verbosity"),
+            )
+            .option(
+                Opt::new("config-file")
+                    .placeholder("PATH")
+                    .desc("Use an alternative configuration file"),
+            )
+            .option(
+                Opt::new("working-directory")
+                    .placeholder("PATH")
+                    .desc("Start the shell in this directory"),
+            )
+            .flag(Flag::new("hold").desc("Remain open after child process exit"))
+            .option(
+                Opt::new("command")
+                    .short('e')
+                    .placeholder("COMMAND ...")
+                    .desc("Execute command with arguments; must be last"),
+            )
+            .option(
+                Opt::new("title")
+                    .short('T')
+                    .placeholder("TITLE")
+                    .desc("Define the window title"),
+            )
+            .option(
+                Opt::new("class")
+                    .placeholder("GENERAL[,INSTANCE]")
+                    .desc("Define the window class"),
+            )
+            .option(
+                Opt::new("option")
+                    .short('o')
+                    .placeholder("KEY=VALUE")
+                    .desc("Override configuration options")
+                    .multi(),
+            )
+            .conflict("verbosity", &["quiet", "verbose"]);
+
+        #[cfg(feature = "ref-tests")]
+        let parser = parser.flag(Flag::new("ref-test").desc("Generate a reference test"));
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let parser = parser.option(
+            Opt::new("embed")
+                .placeholder("WINDOW_ID")
+                .desc("Embed into an existing window"),
+        );
+        #[cfg(unix)]
+        let parser = parser
+            .flag(Flag::new("daemon").desc("Do not spawn an initial window"))
+            .option(
+                Opt::new("socket")
+                    .placeholder("PATH")
+                    .desc("Use a custom IPC socket path"),
+            );
+        #[cfg(all(unix, feature = "ref-tests"))]
+        let parser = parser.conflict("runtime mode", &["ref-test", "daemon"]);
+
+        parser.build().expect("valid CLI schema")
+    }
+
+    fn parse(mut args: Vec<String>) -> Result<Self, CliError> {
+        let command = split_command(&mut args)?;
+        normalize_title_alias(&mut args);
+        normalize_config_options(&mut args);
+        let quiet = count_verbosity(&args, 'q', "--quiet");
+        let verbose = count_verbosity(&args, 'v', "--verbose");
+        let parsed = Self::parser().parse(args).map_err(CliError::Parse)?;
+
+        let terminal_options = TerminalOptions {
+            working_directory: parsed.get_option("working-directory").map(PathBuf::from),
+            hold: parsed.get_flag("hold"),
+            command,
+        };
+        let window_identity = WindowIdentity {
+            title: parsed.get_option("title").map(ToOwned::to_owned),
+            class: parsed
+                .get_option("class")
+                .map(parse_class)
+                .transpose()
+                .map_err(|err| CliError::Value(format!("invalid value for --class: {err}")))?,
+        };
+        let window_options = WindowOptions {
+            terminal_options,
+            window_identity,
+            #[cfg(target_os = "macos")]
+            window_tabbing_id: None,
+            option: parsed.get_option_values("option").to_vec(),
+        };
+        let config_options = window_options.config_overrides();
+
+        Ok(Self {
+            print_events: parsed.get_flag("print-events"),
+            #[cfg(feature = "ref-tests")]
+            ref_test: parsed.get_flag("ref-test"),
+            #[cfg(all(unix, not(target_os = "macos")))]
+            embed: parsed.get_option("embed").map(ToOwned::to_owned),
+            config_file: parsed.get_option("config-file").map(PathBuf::from),
+            quiet,
+            verbose,
+            #[cfg(unix)]
+            daemon: parsed.get_flag("daemon"),
+            #[cfg(unix)]
+            socket: parsed.get_option("socket").map(PathBuf::from),
+            config_options,
+            window_options,
+        })
     }
 
     /// Override configuration file with options from the CLI.
@@ -131,6 +260,120 @@ impl Options {
     }
 }
 
+#[derive(Debug)]
+enum CliError {
+    Parse(ParseError),
+    Value(String),
+}
+
+impl fmt::Display for CliError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Parse(err) => err.fmt(formatter),
+            Self::Value(err) => formatter.write_str(err),
+        }
+    }
+}
+
+/// Remove the command tail before parsing, since every token after `-e` belongs to the child.
+fn split_command(args: &mut Vec<String>) -> Result<Vec<String>, CliError> {
+    let mut after_separator = false;
+    for index in 0..args.len() {
+        let token = &args[index];
+        if token == "--" {
+            after_separator = true;
+            continue;
+        }
+        if after_separator {
+            continue;
+        }
+
+        let attached = token
+            .strip_prefix("--command=")
+            .or_else(|| token.strip_prefix("-e="))
+            .or_else(|| token.strip_prefix("-e").filter(|value| !value.is_empty()));
+        if token != "-e" && token != "--command" && attached.is_none() {
+            continue;
+        }
+
+        let mut tail = args.split_off(index);
+        let option = tail.remove(0);
+        let mut command = Vec::new();
+        if let Some(attached) = option
+            .strip_prefix("--command=")
+            .or_else(|| option.strip_prefix("-e="))
+            .or_else(|| option.strip_prefix("-e").filter(|value| !value.is_empty()))
+        {
+            command.push(attached.to_owned());
+        }
+        command.extend(tail);
+
+        if command.is_empty() {
+            return Err(CliError::Value(format!(
+                "option {option} requires a command"
+            )));
+        }
+        return Ok(command);
+    }
+
+    Ok(Vec::new())
+}
+
+/// Nanoargs has no aliases, so normalize the historical `-t` title alias.
+fn normalize_title_alias(args: &mut [String]) {
+    for arg in args {
+        if arg == "-t" {
+            *arg = String::from("-T");
+        } else if let Some(title) = arg.strip_prefix("-t=") {
+            *arg = format!("-T={title}");
+        } else if let Some(title) = arg.strip_prefix("-t").filter(|title| !title.is_empty()) {
+            *arg = format!("-T{title}");
+        }
+    }
+}
+
+/// Expand legacy `-o value value` syntax into repeated nanoargs options.
+fn normalize_config_options(args: &mut Vec<String>) {
+    let mut index = 0;
+    while index < args.len() {
+        let is_option = matches!(args[index].as_str(), "-o" | "--option")
+            || args[index].starts_with("-o=")
+            || args[index].starts_with("--option=")
+            || (args[index].starts_with("-o") && args[index].len() > 2);
+        if !is_option {
+            index += 1;
+            continue;
+        }
+
+        // An option without an attached value consumes the next token itself.
+        index += usize::from(matches!(args[index].as_str(), "-o" | "--option")) + 1;
+        while index < args.len() && !args[index].starts_with('-') {
+            args.insert(index, String::from("--option"));
+            index += 2;
+        }
+    }
+}
+
+/// Count repeated verbosity flags, which nanoargs intentionally stores as booleans.
+fn count_verbosity(args: &[String], short: char, long: &str) -> u8 {
+    let mut count = 0u8;
+    for arg in args {
+        if arg == long {
+            count = count.saturating_add(1);
+            continue;
+        }
+
+        let Some(cluster) = arg.strip_prefix('-').filter(|arg| !arg.starts_with('-')) else {
+            continue;
+        };
+        if cluster.chars().all(|flag| matches!(flag, 'q' | 'v')) {
+            count =
+                count.saturating_add(cluster.chars().filter(|flag| *flag == short).count() as u8);
+        }
+    }
+    count
+}
+
 /// Parse the class CLI parameter.
 fn parse_class(input: &str) -> Result<Class, String> {
     let (general, instance) = match input.split_once(',') {
@@ -154,18 +397,15 @@ fn parse_hex_or_decimal(input: &str) -> Option<u32> {
 }
 
 /// Terminal-specific CLI options which can be passed to new windows.
-#[derive(Serialize, Deserialize, Args, Default, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq, Eq)]
 pub struct TerminalOptions {
     /// Start the shell in the specified working directory.
-    #[clap(long, value_hint = ValueHint::FilePath)]
     pub working_directory: Option<PathBuf>,
 
     /// Remain open after child process exit.
-    #[clap(long)]
     pub hold: bool,
 
     /// Command and args to execute (must be last argument).
-    #[clap(short = 'e', long, allow_hyphen_values = true, num_args = 1..)]
     command: Vec<String>,
 }
 
@@ -215,14 +455,12 @@ impl From<TerminalOptions> for PtyOptions {
 }
 
 /// Window identity options.
-#[derive(Serialize, Deserialize, Args, Default, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq, Eq)]
 pub struct WindowIdentity {
     /// Defines the window title [default: Alacritty].
-    #[clap(short = 'T', short_alias('t'), long)]
     pub title: Option<String>,
 
     /// Defines window class [default: Alacritty].
-    #[clap(long, value_name = "<general> | <general>,<instance>", value_parser = parse_class)]
     pub class: Option<Class>,
 }
 
@@ -240,24 +478,20 @@ impl WindowIdentity {
 }
 
 /// Subset of options used when creating a new window in-process.
-#[derive(Serialize, Deserialize, Args, Default, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq, Eq)]
 pub struct WindowOptions {
     /// Terminal options for the new window.
-    #[clap(flatten)]
     pub terminal_options: TerminalOptions,
 
     /// Window options for the new window.
-    #[clap(flatten)]
     pub window_identity: WindowIdentity,
 
     /// Identifier used to group windows into tabs on macOS.
     #[cfg(target_os = "macos")]
     #[serde(default)]
-    #[clap(skip)]
     pub window_tabbing_id: Option<String>,
 
     /// Override configuration file options [example: 'cursor.style=\"Beam\"'].
-    #[clap(short = 'o', long, num_args = 1..)]
     option: Vec<String>,
 }
 
@@ -413,6 +647,71 @@ pub enum SocketReply {
 mod tests {
     use super::*;
     use toml::Table;
+
+    fn args(args: &[&str]) -> Vec<String> {
+        args.iter().map(|arg| (*arg).to_owned()).collect()
+    }
+
+    #[test]
+    fn parses_repeated_verbosity_and_command_tail() {
+        let options = Options::parse(args(&["-vvv", "-e", "cmd", "/c", "--child-flag"])).unwrap();
+
+        assert_eq!(options.log_level(), LevelFilter::Trace);
+        assert_eq!(
+            options.window_options.terminal_options.command,
+            ["cmd", "/c", "--child-flag"]
+        );
+    }
+
+    #[test]
+    fn parses_quiet_levels() {
+        let error = Options::parse(args(&["-q"])).unwrap();
+        let off = Options::parse(args(&["-qq"])).unwrap();
+
+        assert_eq!(error.log_level(), LevelFilter::Error);
+        assert_eq!(off.log_level(), LevelFilter::Off);
+    }
+
+    #[test]
+    fn rejects_mixed_verbosity() {
+        assert!(Options::parse(args(&["-vq"])).is_err());
+    }
+
+    #[test]
+    fn parses_title_alias_and_class() {
+        let options =
+            Options::parse(args(&["-t", "Terminal", "--class", "General,Instance"])).unwrap();
+
+        assert_eq!(
+            options.window_options.window_identity.title.as_deref(),
+            Some("Terminal")
+        );
+        let class = options.window_options.window_identity.class.unwrap();
+        assert_eq!(class.general, "General");
+        assert_eq!(class.instance, "Instance");
+    }
+
+    #[test]
+    fn parses_repeated_config_overrides() {
+        let options =
+            Options::parse(args(&["-o", "cursor.style='Beam'", "window.opacity=0.8"])).unwrap();
+
+        assert_eq!(options.window_options.option.len(), 2);
+        assert_eq!(options.config_options.len(), 2);
+    }
+
+    #[test]
+    fn handles_builtin_output_and_missing_command() {
+        assert!(matches!(
+            Options::parse(args(&["--help"])),
+            Err(CliError::Parse(ParseError::HelpRequested(_)))
+        ));
+        assert!(matches!(
+            Options::parse(args(&["--version"])),
+            Err(CliError::Parse(ParseError::VersionRequested(_)))
+        ));
+        assert!(Options::parse(args(&["-e"])).is_err());
+    }
 
     #[test]
     fn dynamic_title_ignoring_options_by_default() {

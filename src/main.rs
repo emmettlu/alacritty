@@ -79,7 +79,7 @@ fn alacritty(mut options: Options) -> Result<(), Box<dyn Error>> {
     log_config_path(&config);
 
     // Update the log level from config.
-    log::set_max_level(config.debug.log_level);
+    logging::set_level(config.debug.log_level);
 
     // Set tty environment variables.
     tty::setup_env();

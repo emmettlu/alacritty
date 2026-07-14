@@ -8,16 +8,14 @@ readme = "README.md"
 ref-tests = ["dep:serde_json"]
 
 [dependencies]
+nanoargs = "0"
+nanologger = { version = "0", features = ["log"] }
+
+
 base64 = "0"
 bitflags = { version = "2", features = ["serde"] }
 bytemuck = { version = "1", features = ["derive"] }
-clap = { version = "4", default-features = false, features = [
-  "derive",
-  "error-context",
-  "help",
-  "std",
-  "usage",
-] }
+
 crossfont = "0"
 dirs = "6"
 log = { version = "0", features = ["serde", "std"] }

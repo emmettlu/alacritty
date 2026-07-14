@@ -1,18 +1,17 @@
 //! Logging for Alacritty.
 //!
-//! The main executable is supposed to call `initialize()` exactly once during
-//! startup. All logging messages are written to stdout, given that their
-//! log-level is sufficient for the level configured in `cli::Options`.
+//! Nanologger owns the global `log` facade. Alacritty-specific behavior is
+//! implemented through writer outputs for the on-demand log file and message bar.
 
+use std::env;
 use std::fs::{File, OpenOptions};
-use std::io::{self, LineWriter, Stdout, Write};
+use std::io::{self, LineWriter, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Instant;
-use std::{env, process};
+use std::process;
+use std::sync::OnceLock;
 
-use log::{Level, LevelFilter};
+use log::LevelFilter;
+use nanologger::{LogLevel, LogOutput, LoggerBuilder};
 use winit::event_loop::EventLoopProxy;
 
 use crate::cli::Options;
@@ -32,166 +31,129 @@ pub const LOG_TARGET_CONFIG: &str = "alacritty_config_derive";
 pub const LOG_TARGET_WINIT: &str = "alacritty_winit_event";
 
 /// Name for the environment variable containing extra logging targets.
-///
-/// The targets are semicolon separated.
 const ALACRITTY_EXTRA_LOG_TARGETS_ENV: &str = "ALACRITTY_EXTRA_LOG_TARGETS";
+
+/// List of targets which will be logged by Alacritty.
+const ALLOWED_TARGETS: &[&str] = &["alacritty", "crossfont"];
 
 /// User configurable extra log targets to include.
 fn extra_log_targets() -> &'static [String] {
     static EXTRA_LOG_TARGETS: OnceLock<Vec<String>> = OnceLock::new();
 
     EXTRA_LOG_TARGETS.get_or_init(|| {
-        env::var(ALACRITTY_EXTRA_LOG_TARGETS_ENV)
-            .map_or(Vec::new(), |targets| targets.split(';').map(ToString::to_string).collect())
+        env::var(ALACRITTY_EXTRA_LOG_TARGETS_ENV).map_or(Vec::new(), |targets| {
+            targets
+                .split(';')
+                .filter(|target| !target.is_empty())
+                .map(ToOwned::to_owned)
+                .collect()
+        })
     })
 }
 
-/// List of targets which will be logged by Alacritty.
-const ALLOWED_TARGETS: &[&str] = &[
-    LOG_TARGET_IPC_CONFIG,
-    LOG_TARGET_CONFIG,
-    LOG_TARGET_WINIT,
-    "alacritty_config_derive",
-    "alacritty_terminal",
-    "alacritty",
-    "crossfont",
-];
-
-/// Initialize the logger to its defaults.
+/// Initialize nanologger and install it as the global `log` facade backend.
 pub fn initialize(
     options: &Options,
     event_proxy: EventLoopProxy<Event>,
-) -> Result<Option<PathBuf>, log::SetLoggerError> {
+) -> Result<Option<PathBuf>, nanologger::InitError> {
+    let logfile = OnDemandLogFile::new();
+    let path = logfile.path.clone();
+    let message_bar = MessageBarWriter::new(event_proxy, path.clone());
+    let module_allow = ALLOWED_TARGETS
+        .iter()
+        .map(|target| (*target).to_owned())
+        .chain(extra_log_targets().iter().cloned())
+        .collect();
+
+    LoggerBuilder::new()
+        .level(nano_level(options.log_level()).unwrap_or(LogLevel::Error))
+        .module_allow(module_allow)
+        // Per-output filters stay open; the global runtime level is authoritative.
+        .add_output(LogOutput::term(LogLevel::Trace))
+        .add_output(LogOutput::writer(LogLevel::Trace, logfile))
+        .add_output(LogOutput::writer(LogLevel::Warn, message_bar))
+        .init()?;
+
+    // Nanologger has no `Off` variant, while the log facade does.
     log::set_max_level(options.log_level());
 
-    let logger = Logger::new(event_proxy);
-    let path = logger.file_path();
-    log::set_boxed_logger(Box::new(logger))?;
-
-    Ok(path)
+    Ok(Some(path))
 }
 
-pub struct Logger {
-    logfile: Mutex<OnDemandLogFile>,
-    stdout: Mutex<LineWriter<Stdout>>,
-    event_proxy: Mutex<EventLoopProxy<Event>>,
-    start: Instant,
+/// Update nanologger after configuration has been loaded.
+pub fn set_level(level: LevelFilter) {
+    match nano_level(level) {
+        Some(level) => nanologger::set_level(level),
+        None => log::set_max_level(LevelFilter::Off),
+    }
 }
 
-impl Logger {
-    fn new(event_proxy: EventLoopProxy<Event>) -> Self {
-        let logfile = Mutex::new(OnDemandLogFile::new());
-        let stdout = Mutex::new(LineWriter::new(io::stdout()));
-
-        Logger { logfile, stdout, event_proxy: Mutex::new(event_proxy), start: Instant::now() }
+fn nano_level(level: LevelFilter) -> Option<LogLevel> {
+    match level {
+        LevelFilter::Off => None,
+        LevelFilter::Error => Some(LogLevel::Error),
+        LevelFilter::Warn => Some(LogLevel::Warn),
+        LevelFilter::Info => Some(LogLevel::Info),
+        LevelFilter::Debug => Some(LogLevel::Debug),
+        LevelFilter::Trace => Some(LogLevel::Trace),
     }
+}
 
-    fn file_path(&self) -> Option<PathBuf> {
-        let logfile_lock = self.logfile.lock().ok()?;
-        Some(logfile_lock.path().clone())
+struct MessageBarWriter {
+    event_proxy: EventLoopProxy<Event>,
+    logfile_path: PathBuf,
+}
+
+impl MessageBarWriter {
+    fn new(event_proxy: EventLoopProxy<Event>, logfile_path: PathBuf) -> Self {
+        Self {
+            event_proxy,
+            logfile_path,
+        }
     }
+}
 
-    /// Log a record to the message bar.
-    fn message_bar_log(&self, record: &log::Record<'_>, logfile_path: &str) {
-        let message_type = match record.level() {
-            Level::Error => MessageType::Error,
-            Level::Warn => MessageType::Warning,
-            _ => return,
+impl Write for MessageBarWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let text = String::from_utf8_lossy(buf);
+        let (prefix, message_type) = if text.starts_with("[ERROR]") {
+            ("[ERROR]", MessageType::Error)
+        } else if text.starts_with("[WARN]") {
+            ("[WARN]", MessageType::Warning)
+        } else {
+            return Ok(buf.len());
         };
-
-        let event_proxy = match self.event_proxy.lock() {
-            Ok(event_proxy) => event_proxy,
-            Err(_) => return,
-        };
+        let text = text
+            .strip_prefix(prefix)
+            .map(str::trim)
+            .unwrap_or(text.as_ref());
 
         #[cfg(not(windows))]
         let env_var = format!("${ALACRITTY_LOG_ENV}");
         #[cfg(windows)]
-        let env_var = format!("%{}%", ALACRITTY_LOG_ENV);
+        let env_var = format!("%{ALACRITTY_LOG_ENV}%");
 
-        let message = format!(
-            "[{}] {}\nSee log at {} ({})",
-            record.level(),
-            record.args(),
-            logfile_path,
-            env_var,
+        let message = Message::new(
+            format!(
+                "{prefix} {text}\nSee log at {} ({env_var})",
+                self.logfile_path.display()
+            ),
+            message_type,
         );
+        let _ = self
+            .event_proxy
+            .send_event(Event::new(EventType::Message(message), None));
 
-        let mut message = Message::new(message, message_type);
-        message.set_target(record.target().to_owned());
-
-        let _ = event_proxy.send_event(Event::new(EventType::Message(message), None));
-    }
-}
-
-impl log::Log for Logger {
-    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
-        metadata.level() <= log::max_level()
+        Ok(buf.len())
     }
 
-    fn log(&self, record: &log::Record<'_>) {
-        // Get target crate.
-        let index = record.target().find(':').unwrap_or_else(|| record.target().len());
-        let target = &record.target()[..index];
-
-        // Only log our own crates, except when logging at Level::Trace.
-        if !self.enabled(record.metadata()) || !is_allowed_target(record.level(), target) {
-            return;
-        }
-
-        // Create log message for the given `record` and `target`.
-        let message = create_log_message(record, target, self.start);
-
-        if let Ok(mut logfile) = self.logfile.lock() {
-            // Write to logfile.
-            let _ = logfile.write_all(message.as_ref());
-
-            // Log relevant entries to message bar.
-            self.message_bar_log(record, &logfile.path.to_string_lossy());
-        }
-
-        // Write to stdout.
-        if let Ok(mut stdout) = self.stdout.lock() {
-            let _ = stdout.write_all(message.as_ref());
-        }
-    }
-
-    fn flush(&self) {}
-}
-
-fn create_log_message(record: &log::Record<'_>, target: &str, start: Instant) -> String {
-    let runtime = start.elapsed();
-    let secs = runtime.as_secs();
-    let nanos = runtime.subsec_nanos();
-    let mut message = format!("[{}.{:0>9}s] [{:<5}] [{}] ", secs, nanos, record.level(), target);
-
-    // Alignment for the lines after the first new line character in the payload. We don't deal
-    // with fullwidth/unicode chars here, so just `message.len()` is sufficient.
-    let alignment = message.len();
-
-    // Push lines with added extra padding on the next line, which is trimmed later.
-    let lines = record.args().to_string();
-    for line in lines.split('\n') {
-        let line = format!("{}\n{:width$}", line, "", width = alignment);
-        message.push_str(&line);
-    }
-
-    // Drop extra trailing alignment.
-    message.truncate(message.len() - alignment);
-    message
-}
-
-/// Check if log messages from a crate should be logged.
-fn is_allowed_target(level: Level, target: &str) -> bool {
-    match (level, log::max_level()) {
-        (Level::Error, LevelFilter::Trace) | (Level::Warn, LevelFilter::Trace) => true,
-        _ => ALLOWED_TARGETS.contains(&target) || extra_log_targets().iter().any(|t| t == target),
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 
 struct OnDemandLogFile {
     file: Option<LineWriter<File>>,
-    created: Arc<AtomicBool>,
     path: PathBuf,
 }
 
@@ -203,47 +165,46 @@ impl OnDemandLogFile {
         // Set log path as an environment variable.
         unsafe { env::set_var(ALACRITTY_LOG_ENV, path.as_os_str()) };
 
-        OnDemandLogFile { path, file: None, created: Arc::new(AtomicBool::new(false)) }
+        Self { path, file: None }
     }
 
-    fn file(&mut self) -> Result<&mut LineWriter<File>, io::Error> {
-        // Allow to recreate the file if it has been deleted at runtime.
-        if self.file.is_some() && !self.path.as_path().exists() {
+    fn file(&mut self) -> io::Result<&mut LineWriter<File>> {
+        // Allow recreation if the file is deleted at runtime.
+        if self.file.is_some() && !self.path.exists() {
             self.file = None;
         }
 
-        // Create the file if it doesn't exist yet.
         if self.file.is_none() {
-            let file = OpenOptions::new().append(true).create_new(true).open(&self.path);
-
-            match file {
+            match OpenOptions::new()
+                .append(true)
+                .create_new(true)
+                .open(&self.path)
+            {
                 Ok(file) => {
-                    self.file = Some(io::LineWriter::new(file));
-                    self.created.store(true, Ordering::Relaxed);
-                    let _ =
-                        writeln!(io::stdout(), "Created log file at \"{}\"", self.path.display());
-                },
-                Err(e) => {
-                    let _ = writeln!(io::stdout(), "Unable to create log file: {e}");
-                    return Err(e);
-                },
+                    self.file = Some(LineWriter::new(file));
+                    let _ = writeln!(
+                        io::stdout(),
+                        "Created log file at \"{}\"",
+                        self.path.display()
+                    );
+                }
+                Err(err) => {
+                    let _ = writeln!(io::stdout(), "Unable to create log file: {err}");
+                    return Err(err);
+                }
             }
         }
 
-        Ok(self.file.as_mut().unwrap())
-    }
-
-    fn path(&self) -> &PathBuf {
-        &self.path
+        Ok(self.file.as_mut().expect("log file initialized"))
     }
 }
 
 impl Write for OnDemandLogFile {
-    fn write(&mut self, buf: &[u8]) -> Result<usize, io::Error> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.file()?.write(buf)
     }
 
-    fn flush(&mut self) -> Result<(), io::Error> {
+    fn flush(&mut self) -> io::Result<()> {
         self.file()?.flush()
     }
 }
