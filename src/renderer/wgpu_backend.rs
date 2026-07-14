@@ -1,5 +1,5 @@
 use std::ops::Range;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use crossfont::Metrics;
 use log::{debug, info, warn};
@@ -17,11 +17,10 @@ use crate::renderer::Error;
 use crate::renderer::rects::RenderRect;
 
 mod atlas;
+mod builtin_font;
 mod glyph_cache;
 
-pub(crate) use crate::renderer::text::builtin_font;
-
-pub use glyph_cache::GlyphCache;
+pub(crate) use glyph_cache::GlyphCache;
 
 use atlas::{Glyph, GlyphAtlas};
 
@@ -50,7 +49,7 @@ const _: () = assert!(std::mem::size_of::<TextInstanceData>() == 36);
 
 /// 文本相对于矩形层的渲染位置.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TextLayer {
+pub(crate) enum TextLayer {
     BeforeRects,
     AfterRects,
 }
@@ -66,13 +65,13 @@ impl TextLayer {
 
 /// Reason a surface frame is temporarily unavailable.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FrameUnavailable {
+pub(crate) enum FrameUnavailable {
     Retry,
     Suspended,
 }
 
 /// Surface resources which live for one rendered frame.
-pub struct WgpuFrame {
+pub(crate) struct WgpuFrame {
     output: wgpu::SurfaceTexture,
     view: wgpu::TextureView,
     encoder: wgpu::CommandEncoder,
@@ -91,9 +90,12 @@ impl TextBatch {
     }
 }
 
-struct TextDrawBatch {
-    instance_range: Range<u32>,
-    atlas_ranges: Vec<(usize, Range<u32>)>,
+enum TextDrawCommand {
+    Background(Range<u32>),
+    Glyph {
+        atlas_index: usize,
+        instance_range: Range<u32>,
+    },
 }
 
 /// 文本 uniform 数据
@@ -147,11 +149,17 @@ const WIDE_CHAR_FLAG: u32 = 2;
 /// 将 sRGB 值转换为线性空间.
 /// sRGB 颜色在传递给 GPU 前需要进行此转换, 否则颜色会偏浅.
 /// 使用标准 sRGB 分段公式, 替代近似 powf(2.2).
+static SRGB_TO_LINEAR_U8: LazyLock<[u8; 256]> = LazyLock::new(|| {
+    std::array::from_fn(|value| {
+        (srgb_byte_to_linear(value as u8) * 255.0)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    })
+});
+
 #[inline]
 fn srgb_to_linear(srgb: u8) -> u8 {
-    (srgb_byte_to_linear(srgb) * 255.0)
-        .round()
-        .clamp(0.0, 255.0) as u8
+    SRGB_TO_LINEAR_U8[srgb as usize]
 }
 
 /// f32 版本的 sRGB 到线性空间转换
@@ -160,7 +168,7 @@ fn srgb_to_linear_f32(srgb: u8) -> f32 {
     srgb_byte_to_linear(srgb)
 }
 
-pub struct WgpuRenderer {
+pub(crate) struct WgpuRenderer {
     instance: wgpu::Instance,
     adapter: wgpu::Adapter,
     surface: wgpu::Surface<'static>,
@@ -182,12 +190,15 @@ pub struct WgpuRenderer {
     text_batches: [Vec<TextBatch>; 2],
     text_batch_counts: [usize; 2],
     text_instances: Vec<TextInstanceData>,
+    text_draw_commands: [Vec<TextDrawCommand>; 2],
 
     // -- 矩形渲染管线 --
     rect_pipelines: [wgpu::RenderPipeline; 4], // normal, undercurl, dotted, dashed
     rect_uniform_buffer: wgpu::Buffer,
     rect_uniform_bind_group: wgpu::BindGroup,
     rect_vertex_buffer: wgpu::Buffer,
+    rect_vertices: Vec<RectVertex>,
+    rect_ranges: [Option<Range<u32>>; 4],
 
     // -- Atlas / 字形管理 --
     glyph_atlas: GlyphAtlas,
@@ -200,7 +211,7 @@ impl std::fmt::Debug for WgpuRenderer {
 }
 
 impl WgpuRenderer {
-    pub fn new(surface_target: Arc<WinitWindow>, opacity: f32) -> Result<Self, Error> {
+    pub(crate) fn new(surface_target: Arc<WinitWindow>, opacity: f32) -> Result<Self, Error> {
         let mut instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
         #[cfg(windows)]
         {
@@ -368,93 +379,62 @@ impl WgpuRenderer {
             ],
         };
 
-        // 背景 pass 管线 - 使用预乘 alpha 混合
-        let text_bg_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("text_bg_pipeline"),
-            layout: Some(&text_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &text_shader,
-                entry_point: Some("vs_bg"),
-                buffers: std::slice::from_ref(&text_instance_layout),
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &text_shader,
-                entry_point: Some("fs_bg"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::One,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                        alpha: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::One,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                    }),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let create_text_pipeline = |label: &'static str,
+                                    vertex_entry: &'static str,
+                                    fragment_entry: &'static str,
+                                    blend: wgpu::BlendState| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&text_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &text_shader,
+                    entry_point: Some(vertex_entry),
+                    buffers: std::slice::from_ref(&text_instance_layout),
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &text_shader,
+                    entry_point: Some(fragment_entry),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: surface_format,
+                        blend: Some(blend),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
 
-        // 文字 pass 管线 - 使用标准 alpha 混合
-        let text_fg_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("text_fg_pipeline"),
-            layout: Some(&text_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &text_shader,
-                entry_point: Some("vs_text"),
-                buffers: &[text_instance_layout],
-                compilation_options: Default::default(),
+        let premultiplied_blend = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &text_shader,
-                entry_point: Some("fs_text"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::SrcAlpha,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                        alpha: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::One,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                    }),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                ..Default::default()
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
             },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        };
+        let text_bg_pipeline =
+            create_text_pipeline("text_bg_pipeline", "vs_bg", "fs_bg", premultiplied_blend);
+
+        let text_fg_pipeline = create_text_pipeline(
+            "text_fg_pipeline",
+            "vs_text",
+            "fs_text",
+            wgpu::BlendState::ALPHA_BLENDING,
+        );
 
         // =============================
         // 文本 instance buffer
@@ -595,11 +575,14 @@ impl WgpuRenderer {
             text_batches: Default::default(),
             text_batch_counts: [0; 2],
             text_instances: Vec::new(),
+            text_draw_commands: Default::default(),
 
             rect_pipelines,
             rect_uniform_buffer,
             rect_uniform_bind_group,
             rect_vertex_buffer,
+            rect_vertices: Vec::new(),
+            rect_ranges: Default::default(),
 
             glyph_atlas,
         })
@@ -742,7 +725,7 @@ impl WgpuRenderer {
     }
 
     /// Acquire a frame and recover outdated or lost surfaces once.
-    pub fn begin_frame(&mut self) -> Result<WgpuFrame, FrameUnavailable> {
+    pub(crate) fn begin_frame(&mut self) -> Result<WgpuFrame, FrameUnavailable> {
         self.text_batch_counts = [0; 2];
 
         if !self.configure_surface(false) {
@@ -786,7 +769,7 @@ impl WgpuRenderer {
     }
 
     #[cfg(unix)]
-    pub fn update_surface_opacity(&mut self, opacity: f32) {
+    pub(crate) fn update_surface_opacity(&mut self, opacity: f32) {
         self.surface_opacity = opacity;
         let caps = self.surface.get_capabilities(&self.adapter);
         let Some(alpha_mode) = Self::select_alpha_mode(&caps.alpha_modes, opacity) else {
@@ -800,32 +783,102 @@ impl WgpuRenderer {
         }
     }
 
-    pub fn clear_frame(&self, frame: &mut WgpuFrame, color: Rgb, alpha: f32) {
-        self.clear(&mut frame.encoder, &frame.view, color, alpha);
-    }
-
-    pub fn render_frame(
+    pub(crate) fn render_frame(
         &mut self,
         frame: &mut WgpuFrame,
         size_info: &SizeInfo,
         metrics: &Metrics,
-        rects: Vec<RenderRect>,
+        rects: &[RenderRect],
+        clear_color: Rgb,
+        clear_alpha: f32,
     ) {
-        self.render_queued(size_info, metrics, rects, &mut frame.encoder, &frame.view);
+        self.prepare_text(size_info);
+        let has_rects = self.prepare_rects(size_info, metrics, rects);
+        let clear_color = Self::clear_color(clear_color, clear_alpha);
+
+        let mut rpass = frame
+            .encoder
+            .begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("frame_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &frame.view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(clear_color),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+        let (viewport_x, viewport_y, viewport_width, viewport_height) =
+            Self::content_viewport(size_info);
+        rpass.set_viewport(
+            viewport_x,
+            viewport_y,
+            viewport_width,
+            viewport_height,
+            0.0,
+            1.0,
+        );
+
+        self.render_text_layer(
+            &self.text_draw_commands[TextLayer::BeforeRects.index()],
+            &mut rpass,
+        );
+        if has_rects {
+            self.render_rects(&mut rpass);
+        }
+        self.render_text_layer(
+            &self.text_draw_commands[TextLayer::AfterRects.index()],
+            &mut rpass,
+        );
     }
 
-    pub fn submit_frame(&self, frame: WgpuFrame) {
+    pub(crate) fn submit_frame(&self, frame: WgpuFrame) {
         self.queue.submit(std::iter::once(frame.encoder.finish()));
         frame.output.present();
     }
 
-    pub fn present_clear(&mut self, color: Rgb, alpha: f32) -> bool {
+    pub(crate) fn present_clear(&mut self, color: Rgb, alpha: f32) {
         let Ok(mut frame) = self.begin_frame() else {
-            return false;
+            return;
         };
         self.clear_frame(&mut frame, color, alpha);
         self.submit_frame(frame);
-        true
+    }
+
+    fn clear_frame(&self, frame: &mut WgpuFrame, color: Rgb, alpha: f32) {
+        let _rpass = frame
+            .encoder
+            .begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("clear_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &frame.view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(Self::clear_color(color, alpha)),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+    }
+
+    fn clear_color(color: Rgb, alpha: f32) -> wgpu::Color {
+        wgpu::Color {
+            r: (srgb_to_linear_f32(color.r) * alpha) as f64,
+            g: (srgb_to_linear_f32(color.g) * alpha) as f64,
+            b: (srgb_to_linear_f32(color.b) * alpha) as f64,
+            a: alpha as f64,
+        }
     }
 
     fn content_viewport(size_info: &SizeInfo) -> (f32, f32, f32, f32) {
@@ -856,8 +909,12 @@ impl WgpuRenderer {
     }
 
     /// 将一批单元格加入指定文本层, 不立即录制绘制命令.
-    pub fn queue_cells<I>(&mut self, layer: TextLayer, glyph_cache: &mut GlyphCache, cells: I)
-    where
+    pub(crate) fn queue_cells<I>(
+        &mut self,
+        layer: TextLayer,
+        glyph_cache: &mut GlyphCache,
+        cells: I,
+    ) where
         I: IntoIterator<Item = RenderableCell>,
     {
         let cells = cells.into_iter();
@@ -890,58 +947,38 @@ impl WgpuRenderer {
         }
     }
 
-    /// 一次性上传本帧所有文本实例, 并按文本层、矩形层的固定顺序录制命令.
-    pub fn render_queued(
-        &mut self,
-        size_info: &SizeInfo,
-        metrics: &Metrics,
-        rects: Vec<RenderRect>,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-    ) {
-        let draw_batches = self.flatten_text_batches();
+    /// Flatten and upload all text queued for the current frame.
+    fn prepare_text(&mut self, size_info: &SizeInfo) {
+        self.flatten_text_batches();
         let total_instances = self.text_instances.len();
-
-        if total_instances > 0 {
-            let uniforms = self.compute_text_uniforms(size_info);
-            self.queue
-                .write_buffer(&self.text_uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
-
-            self.ensure_text_instance_buffer_capacity(total_instances);
-            self.queue.write_buffer(
-                &self.text_instance_buffer,
-                0,
-                bytemuck::cast_slice(&self.text_instances),
-            );
+        if total_instances == 0 {
+            return;
         }
 
-        self.render_text_layer(
-            "text_before_rects_pass",
-            size_info,
-            &draw_batches[TextLayer::BeforeRects.index()],
-            encoder,
-            view,
-        );
-        self.draw_rects(size_info, metrics, rects, encoder, view);
-        self.render_text_layer(
-            "text_after_rects_pass",
-            size_info,
-            &draw_batches[TextLayer::AfterRects.index()],
-            encoder,
-            view,
-        );
+        let uniforms = self.compute_text_uniforms(size_info);
+        self.queue
+            .write_buffer(&self.text_uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        self.text_batch_counts = [0; 2];
+        self.ensure_text_instance_buffer_capacity(total_instances);
+        self.queue.write_buffer(
+            &self.text_instance_buffer,
+            0,
+            bytemuck::cast_slice(&self.text_instances),
+        );
     }
 
-    fn flatten_text_batches(&mut self) -> [Vec<TextDrawBatch>; 2] {
+    fn flatten_text_batches(&mut self) {
         self.text_instances.clear();
-        let mut draw_batches: [Vec<TextDrawBatch>; 2] = Default::default();
+        for commands in &mut self.text_draw_commands {
+            commands.clear();
+        }
 
         for (layer_index, batches) in self.text_batches.iter().enumerate() {
+            let commands = &mut self.text_draw_commands[layer_index];
             for batch in batches.iter().take(self.text_batch_counts[layer_index]) {
                 let batch_start = self.text_instances.len() as u32;
-                let mut atlas_ranges = Vec::new();
+                let command_start = commands.len();
+                commands.push(TextDrawCommand::Background(batch_start..batch_start));
 
                 for (atlas_index, instances) in batch.instances_by_atlas.iter().enumerate() {
                     if instances.is_empty() {
@@ -951,72 +988,56 @@ impl WgpuRenderer {
                     let start = self.text_instances.len() as u32;
                     self.text_instances.extend_from_slice(instances);
                     let end = self.text_instances.len() as u32;
-                    atlas_ranges.push((atlas_index, start..end));
+                    commands.push(TextDrawCommand::Glyph {
+                        atlas_index,
+                        instance_range: start..end,
+                    });
                 }
 
                 let batch_end = self.text_instances.len() as u32;
-                if batch_start != batch_end {
-                    draw_batches[layer_index].push(TextDrawBatch {
-                        instance_range: batch_start..batch_end,
-                        atlas_ranges,
-                    });
+                if batch_start == batch_end {
+                    commands.truncate(command_start);
+                } else if let TextDrawCommand::Background(instance_range) =
+                    &mut commands[command_start]
+                {
+                    *instance_range = batch_start..batch_end;
                 }
             }
         }
-
-        draw_batches
     }
 
-    fn render_text_layer(
-        &self,
-        label: &'static str,
-        size_info: &SizeInfo,
-        draw_batches: &[TextDrawBatch],
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
+    fn render_text_layer<'pass>(
+        &'pass self,
+        commands: &'pass [TextDrawCommand],
+        rpass: &mut wgpu::RenderPass<'pass>,
     ) {
-        if draw_batches.is_empty() {
+        if commands.is_empty() {
             return;
         }
 
-        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some(label),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
-        let (viewport_x, viewport_y, viewport_width, viewport_height) =
-            Self::content_viewport(size_info);
-        rpass.set_viewport(
-            viewport_x,
-            viewport_y,
-            viewport_width,
-            viewport_height,
-            0.0,
-            1.0,
-        );
         rpass.set_bind_group(0, &self.text_uniform_bind_group, &[]);
         rpass.set_vertex_buffer(0, self.text_instance_buffer.slice(..));
 
-        for batch in draw_batches {
-            rpass.set_pipeline(&self.text_bg_pipeline);
-            rpass.set_bind_group(1, self.glyph_atlas.bind_group(0), &[]);
-            rpass.draw(0..6, batch.instance_range.clone());
-
-            rpass.set_pipeline(&self.text_fg_pipeline);
-            for (atlas_index, instance_range) in &batch.atlas_ranges {
-                rpass.set_bind_group(1, self.glyph_atlas.bind_group(*atlas_index), &[]);
-                rpass.draw(0..6, instance_range.clone());
+        let mut foreground_pipeline_active = false;
+        for command in commands {
+            match command {
+                TextDrawCommand::Background(instance_range) => {
+                    rpass.set_pipeline(&self.text_bg_pipeline);
+                    rpass.set_bind_group(1, self.glyph_atlas.bind_group(0), &[]);
+                    rpass.draw(0..6, instance_range.clone());
+                    foreground_pipeline_active = false;
+                }
+                TextDrawCommand::Glyph {
+                    atlas_index,
+                    instance_range,
+                } => {
+                    if !foreground_pipeline_active {
+                        rpass.set_pipeline(&self.text_fg_pipeline);
+                        foreground_pipeline_active = true;
+                    }
+                    rpass.set_bind_group(1, self.glyph_atlas.bind_group(*atlas_index), &[]);
+                    rpass.draw(0..6, instance_range.clone());
+                }
             }
         }
     }
@@ -1112,7 +1133,7 @@ impl WgpuRenderer {
     }
 
     /// 将字符串加入指定文本层, 不立即录制绘制命令.
-    pub fn queue_string(
+    pub(crate) fn queue_string(
         &mut self,
         layer: TextLayer,
         point: Point<usize>,
@@ -1146,54 +1167,17 @@ impl WgpuRenderer {
         self.queue_cells(layer, glyph_cache, cells);
     }
 
-    /// 清屏
-    pub fn clear(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-        color: Rgb,
-        alpha: f32,
-    ) {
-        // 将 sRGB 颜色转换为线性空间
-        let r = srgb_to_linear_f32(color.r) * alpha;
-        let g = srgb_to_linear_f32(color.g) * alpha;
-        let b = srgb_to_linear_f32(color.b) * alpha;
-
-        let _rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("clear_pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: r as f64,
-                        g: g as f64,
-                        b: b as f64,
-                        a: alpha as f64,
-                    }),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
-        // render pass 在 drop 时自动结束
-    }
-
-    /// 绘制矩形
-    fn draw_rects(
+    /// Build and upload all rectangle vertices for the current frame.
+    fn prepare_rects(
         &mut self,
         size_info: &SizeInfo,
         metrics: &Metrics,
-        rects: Vec<RenderRect>,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-    ) {
+        rects: &[RenderRect],
+    ) -> bool {
+        self.rect_vertices.clear();
+        self.rect_ranges.fill(None);
         if rects.is_empty() {
-            return;
+            return false;
         }
 
         // 矩形和文本必须使用同一套内容区域投影, 否则 hollow cursor 等矩形会随行号
@@ -1202,34 +1186,30 @@ impl WgpuRenderer {
         let half_width = drawable_width / 2.;
         let half_height = drawable_height / 2.;
 
-        // 按矩形类型分类顶点
-        let mut vertices_by_kind: [Vec<RectVertex>; 4] = Default::default();
-        let estimated_vertices_per_kind = rects.len().saturating_mul(6) / vertices_by_kind.len();
-        for vertices in &mut vertices_by_kind {
-            vertices.reserve(estimated_vertices_per_kind);
-        }
-        for rect in &rects {
-            let kind_idx = rect.kind as usize;
-            if kind_idx < 4 {
-                Self::add_rect_vertices(
-                    &mut vertices_by_kind[kind_idx],
-                    half_width,
-                    half_height,
-                    rect,
-                );
+        self.rect_vertices.reserve(rects.len().saturating_mul(6));
+        // 逆序分组, 保证普通矩形最后绘制在最上层.
+        for kind_index in (0..self.rect_ranges.len()).rev() {
+            let start = self.rect_vertices.len() as u32;
+            for rect in rects.iter().filter(|rect| rect.kind as usize == kind_index) {
+                Self::add_rect_vertices(&mut self.rect_vertices, half_width, half_height, rect);
+            }
+            let end = self.rect_vertices.len() as u32;
+            if start != end {
+                self.rect_ranges[kind_index] = Some(start..end);
             }
         }
 
-        // 计算 uniform 数据
+        if self.rect_vertices.is_empty() {
+            return false;
+        }
+
         let position = (0.5 * metrics.descent).abs();
         let underline_position = metrics.descent.abs() - metrics.underline_position.abs();
-        let padding_y = size_info.padding_y();
-
         let rect_uniforms = RectUniforms {
             cell_width: size_info.cell_width(),
             cell_height: size_info.cell_height(),
             padding_x: size_info.padding_x(),
-            padding_y,
+            padding_y: size_info.padding_y(),
             underline_position,
             underline_thickness: metrics.underline_thickness,
             undercurl_position: position,
@@ -1241,70 +1221,33 @@ impl WgpuRenderer {
             bytemuck::bytes_of(&rect_uniforms),
         );
 
-        let mut all_vertices = Vec::with_capacity(rects.len().saturating_mul(6));
-        let mut ranges = Vec::new();
-        // 逆序绘制, 普通矩形在最上面.
-        for kind_idx in (0..4).rev() {
-            let vertices = &vertices_by_kind[kind_idx];
-            if vertices.is_empty() {
-                continue;
-            }
-
-            let start = all_vertices.len() as u32;
-            all_vertices.extend_from_slice(vertices);
-            let end = all_vertices.len() as u32;
-            ranges.push((kind_idx, start, end));
-        }
-
-        if ranges.is_empty() {
-            return;
-        }
-
-        let vertex_data = bytemuck::cast_slice(&all_vertices);
-        let needed_size = vertex_data.len() as u64;
+        let needed_size = (self.rect_vertices.len() * std::mem::size_of::<RectVertex>()) as u64;
         if needed_size > self.rect_vertex_buffer.size() {
-            let new_size = needed_size.next_power_of_two();
             self.rect_vertex_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("rect_vertex_buffer_resized"),
-                size: new_size,
+                size: needed_size.next_power_of_two(),
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
         }
-        self.queue
-            .write_buffer(&self.rect_vertex_buffer, 0, vertex_data);
-
-        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("rect_pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
-        let (viewport_x, viewport_y, viewport_width, viewport_height) =
-            Self::content_viewport(size_info);
-        rpass.set_viewport(
-            viewport_x,
-            viewport_y,
-            viewport_width,
-            viewport_height,
-            0.0,
-            1.0,
+        self.queue.write_buffer(
+            &self.rect_vertex_buffer,
+            0,
+            bytemuck::cast_slice(&self.rect_vertices),
         );
+
+        true
+    }
+
+    fn render_rects<'pass>(&'pass self, rpass: &mut wgpu::RenderPass<'pass>) {
         rpass.set_bind_group(0, &self.rect_uniform_bind_group, &[]);
         rpass.set_vertex_buffer(0, self.rect_vertex_buffer.slice(..));
-        for (kind_idx, start, end) in ranges {
-            rpass.set_pipeline(&self.rect_pipelines[kind_idx]);
-            rpass.draw(start..end, 0..1);
+        for kind_index in (0..self.rect_ranges.len()).rev() {
+            let Some(range) = &self.rect_ranges[kind_index] else {
+                continue;
+            };
+            rpass.set_pipeline(&self.rect_pipelines[kind_index]);
+            rpass.draw(range.clone(), 0..1);
         }
     }
 
@@ -1364,7 +1307,7 @@ impl WgpuRenderer {
     }
 
     /// 清空 atlas 并使用当前字体配置重新预取常用字形.
-    pub fn reset_glyph_cache(&mut self, glyph_cache: &mut GlyphCache) {
+    pub(crate) fn reset_glyph_cache(&mut self, glyph_cache: &mut GlyphCache) {
         glyph_cache.reset_glyph_cache(&mut self.glyph_atlas);
     }
 }

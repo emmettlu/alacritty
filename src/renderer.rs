@@ -3,20 +3,17 @@
 use std::fmt;
 
 /// Shared rectangle primitives and line-shaping utilities.
-pub mod rects;
+pub(crate) mod rects;
 
-/// Font fallback drawing used by glyph cache.
-pub(crate) mod text;
-
-/// Windows wgpu renderer implementation.
-pub mod wgpu_backend;
+/// Wgpu renderer implementation.
+pub(crate) mod wgpu_backend;
 
 /// Active glyph cache type for the renderer backend.
-pub use wgpu_backend::GlyphCache;
+pub(crate) use wgpu_backend::GlyphCache;
 
 /// Renderer initialization error.
 #[derive(Debug)]
-pub enum Error {
+pub(crate) enum Error {
     CreateSurface(wgpu::CreateSurfaceError),
     RequestAdapter(wgpu::RequestAdapterError),
     RequestDevice(wgpu::RequestDeviceError),

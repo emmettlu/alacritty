@@ -8,7 +8,7 @@ use crate::display::content::RenderableCursor;
 use crate::renderer::rects::RenderRect;
 
 /// Trait for conversion into the iterator.
-pub trait IntoRects {
+pub(crate) trait IntoRects {
     /// Consume the cursor for an iterator of rects.
     fn rects(self, size_info: &SizeInfo, thickness: f32) -> CursorRects;
 }
@@ -37,7 +37,7 @@ impl IntoRects for RenderableCursor {
 
 /// Cursor rect iterator.
 #[derive(Default)]
-pub struct CursorRects {
+pub(crate) struct CursorRects {
     rects: [Option<RenderRect>; 4],
     index: usize,
 }

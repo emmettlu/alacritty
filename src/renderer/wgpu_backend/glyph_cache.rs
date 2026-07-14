@@ -1,5 +1,4 @@
-// wgpu 后端的字形缓存
-// 对应原 renderer/text/glyph_cache.rs, 但使用 wgpu atlas 而非 GL atlas
+//! Glyph rasterization and caching for the wgpu renderer.
 
 use std::collections::HashMap;
 
@@ -21,7 +20,7 @@ use super::builtin_font;
 /// 简单的字形缓存.
 ///
 /// 当前仅以 `GlyphKey` 为键, 因此无法保存同一码点的不同表示.
-pub struct GlyphCache {
+pub(crate) struct GlyphCache {
     /// 已缓存的字形.
     cache: HashMap<GlyphKey, Glyph, FxBuildHasher>,
 
@@ -57,7 +56,10 @@ pub struct GlyphCache {
 }
 
 impl GlyphCache {
-    pub fn new(mut rasterizer: Rasterizer, font: &Font) -> Result<GlyphCache, crossfont::Error> {
+    pub(crate) fn new(
+        mut rasterizer: Rasterizer,
+        font: &Font,
+    ) -> Result<GlyphCache, crossfont::Error> {
         let (regular, bold, italic, bold_italic) = Self::compute_font_keys(font, &mut rasterizer)?;
 
         let metrics = GlyphCache::load_font_metrics(&mut rasterizer, font, regular)?;
@@ -266,7 +268,7 @@ impl GlyphCache {
     /// 更新内部字体大小.
     ///
     /// 注意: 要重新加载渲染器的字体, 之后应调用 [`Self::reset_glyph_cache`].
-    pub fn update_font_size(&mut self, font: &Font) -> Result<(), crossfont::Error> {
+    pub(crate) fn update_font_size(&mut self, font: &Font) -> Result<(), crossfont::Error> {
         // 更新 dpi 缩放.
         self.font_offset = font.offset;
         self.glyph_offset = font.glyph_offset;
@@ -290,15 +292,12 @@ impl GlyphCache {
         Ok(())
     }
 
-    pub fn font_metrics(&self) -> crossfont::Metrics {
+    pub(crate) fn font_metrics(&self) -> crossfont::Metrics {
         self.metrics
     }
 
-    /// 预取几乎肯定会被加载的字形.
+    /// 预取首帧几乎肯定会使用的常规 ASCII 字形.
     fn load_common_glyphs(&mut self, atlas: &mut GlyphAtlas) {
         self.load_glyphs_for_style(Flags::empty(), atlas);
-        self.load_glyphs_for_style(Flags::BOLD, atlas);
-        self.load_glyphs_for_style(Flags::ITALIC, atlas);
-        self.load_glyphs_for_style(Flags::BOLD_ITALIC, atlas);
     }
 }

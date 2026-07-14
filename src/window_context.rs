@@ -206,11 +206,6 @@ impl WindowContext {
         self.display.update_config(&self.config);
         self.terminal.lock().set_options(self.config.term_options());
 
-        // Reload cursor if its thickness has changed.
-        if (old_config.cursor.thickness() - self.config.cursor.thickness()).abs() > f32::EPSILON {
-            self.display.pending_update.set_cursor_dirty();
-        }
-
         if old_config.font != self.config.font {
             let scale_factor = self.display.window.scale_factor as f32;
             // Do not update font size if it has been changed at runtime.
@@ -286,9 +281,6 @@ impl WindowContext {
         }
 
         self.dirty = false;
-
-        // Force the display to process any pending display update.
-        self.display.process_renderer_update();
 
         // Request immediate re-draw if visual bell animation is not finished yet.
         if !self.display.visual_bell.completed() {

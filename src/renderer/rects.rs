@@ -2,10 +2,7 @@
 //!
 //! This module is backend-agnostic and contains no OpenGL-specific code.
 
-use std::collections::HashMap;
-
 use crossfont::Metrics;
-use rustc_hash::FxBuildHasher;
 
 use crate::terminal::grid::Dimensions;
 use crate::terminal::index::{Column, Point};
@@ -16,7 +13,7 @@ use crate::display::color::Rgb;
 use crate::display::content::RenderableCell;
 
 #[derive(Debug, Copy, Clone)]
-pub struct RenderRect {
+pub(crate) struct RenderRect {
     pub x: f32,
     pub y: f32,
     pub width: f32,
@@ -27,7 +24,7 @@ pub struct RenderRect {
 }
 
 impl RenderRect {
-    pub fn new(x: f32, y: f32, width: f32, height: f32, color: Rgb, alpha: f32) -> Self {
+    pub(crate) fn new(x: f32, y: f32, width: f32, height: f32, color: Rgb, alpha: f32) -> Self {
         RenderRect {
             kind: RectKind::Normal,
             x,
@@ -41,7 +38,7 @@ impl RenderRect {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct RenderLine {
+pub(crate) struct RenderLine {
     pub start: Point<usize>,
     pub end: Point<usize>,
     pub color: Rgb,
@@ -49,7 +46,7 @@ pub struct RenderLine {
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum RectKind {
+pub(crate) enum RectKind {
     Normal = 0,
     Undercurl = 1,
     DottedUnderline = 2,
@@ -57,22 +54,24 @@ pub enum RectKind {
 }
 
 impl RenderLine {
-    pub fn rects(&self, flag: Flags, metrics: &Metrics, size: &SizeInfo) -> Vec<RenderRect> {
-        let mut rects = Vec::new();
-
+    pub(crate) fn push_rects(
+        &self,
+        rects: &mut Vec<RenderRect>,
+        flag: Flags,
+        metrics: &Metrics,
+        size: &SizeInfo,
+    ) {
         let mut start = self.start;
         while start.line < self.end.line {
             let end = Point::new(start.line, size.last_column());
-            Self::push_rects(&mut rects, metrics, size, flag, start, end, self.color);
+            Self::push_segment_rects(rects, metrics, size, flag, start, end, self.color);
             start = Point::new(start.line + 1, Column(0));
         }
-        Self::push_rects(&mut rects, metrics, size, flag, start, self.end, self.color);
-
-        rects
+        Self::push_segment_rects(rects, metrics, size, flag, start, self.end, self.color);
     }
 
-    /// Push all rects required to draw the cell's line.
-    fn push_rects(
+    /// Push all rects required to draw one line segment.
+    fn push_segment_rects(
         rects: &mut Vec<RenderRect>,
         metrics: &Metrics,
         size: &SizeInfo,
@@ -168,43 +167,49 @@ impl RenderLine {
     }
 }
 
+const LINE_FLAGS: [Flags; 6] = [
+    Flags::UNDERLINE,
+    Flags::DOUBLE_UNDERLINE,
+    Flags::STRIKEOUT,
+    Flags::UNDERCURL,
+    Flags::DOTTED_UNDERLINE,
+    Flags::DASHED_UNDERLINE,
+];
+
 /// Lines for underline and strikeout.
 #[derive(Default)]
-pub struct RenderLines {
-    inner: HashMap<Flags, Vec<RenderLine>, FxBuildHasher>,
+pub(crate) struct RenderLines {
+    inner: [Vec<RenderLine>; LINE_FLAGS.len()],
 }
 
 impl RenderLines {
     #[inline]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
     #[inline]
-    pub fn rects(&self, metrics: &Metrics, size: &SizeInfo) -> Vec<RenderRect> {
-        self.inner
-            .iter()
-            .flat_map(|(flag, lines)| {
-                lines
-                    .iter()
-                    .flat_map(move |line| line.rects(*flag, metrics, size))
-            })
-            .collect()
+    pub(crate) fn rects(&self, metrics: &Metrics, size: &SizeInfo) -> Vec<RenderRect> {
+        let line_count = self.inner.iter().map(Vec::len).sum();
+        let mut rects = Vec::with_capacity(line_count);
+        for (flag, lines) in LINE_FLAGS.into_iter().zip(&self.inner) {
+            for line in lines {
+                line.push_rects(&mut rects, flag, metrics, size);
+            }
+        }
+        rects
     }
 
     /// Update the stored lines with the next cell info.
     #[inline]
-    pub fn update(&mut self, cell: &RenderableCell) {
-        self.update_flag(cell, Flags::UNDERLINE);
-        self.update_flag(cell, Flags::DOUBLE_UNDERLINE);
-        self.update_flag(cell, Flags::STRIKEOUT);
-        self.update_flag(cell, Flags::UNDERCURL);
-        self.update_flag(cell, Flags::DOTTED_UNDERLINE);
-        self.update_flag(cell, Flags::DASHED_UNDERLINE);
+    pub(crate) fn update(&mut self, cell: &RenderableCell) {
+        for (index, flag) in LINE_FLAGS.into_iter().enumerate() {
+            self.update_flag(index, cell, flag);
+        }
     }
 
     /// Update the lines for a specific flag.
-    fn update_flag(&mut self, cell: &RenderableCell, flag: Flags) {
+    fn update_flag(&mut self, index: usize, cell: &RenderableCell, flag: Flags) {
         if !cell.flags.contains(flag) {
             return;
         }
@@ -223,7 +228,8 @@ impl RenderLines {
         }
 
         // Check if there's an active line.
-        if let Some(line) = self.inner.get_mut(&flag).and_then(|lines| lines.last_mut())
+        let lines = &mut self.inner[index];
+        if let Some(line) = lines.last_mut()
             && color == line.color
             && cell.point.column == line.end.column + 1
             && cell.point.line == line.end.line
@@ -239,11 +245,6 @@ impl RenderLines {
             end,
             color,
         };
-        match self.inner.get_mut(&flag) {
-            Some(lines) => lines.push(line),
-            None => {
-                self.inner.insert(flag, vec![line]);
-            }
-        }
+        lines.push(line);
     }
 }

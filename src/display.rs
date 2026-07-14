@@ -31,7 +31,7 @@ use crate::config::font::Font;
 use crate::config::window::Dimensions;
 use crate::display::bell::VisualBell;
 use crate::display::color::{List, Rgb};
-use crate::display::content::{RenderableContent, RenderableCursor};
+use crate::display::content::{RenderableCell, RenderableContent, RenderableCursor};
 use crate::display::cursor::IntoRects;
 use crate::display::damage::DamageTracker;
 use crate::display::hint::{HintMatch, HintState};
@@ -267,7 +267,6 @@ pub struct DisplayUpdate {
     pub dirty: bool,
 
     dimensions: Option<PhysicalSize<u32>>,
-    cursor_dirty: bool,
     font: Option<Font>,
 }
 
@@ -280,10 +279,6 @@ impl DisplayUpdate {
         self.font.as_ref()
     }
 
-    pub fn cursor_dirty(&self) -> bool {
-        self.cursor_dirty
-    }
-
     pub fn set_dimensions(&mut self, dimensions: PhysicalSize<u32>) {
         self.dimensions = Some(dimensions);
         self.dirty = true;
@@ -291,12 +286,6 @@ impl DisplayUpdate {
 
     pub fn set_font(&mut self, font: Font) {
         self.font = Some(font);
-        self.dirty = true;
-    }
-
-    #[cfg(unix)]
-    pub fn set_cursor_dirty(&mut self) {
-        self.cursor_dirty = true;
         self.dirty = true;
     }
 }
@@ -331,9 +320,6 @@ pub struct Display {
     /// Unprocessed display updates.
     pub pending_update: DisplayUpdate,
 
-    /// Font cache reset deferred until immediately before rendering.
-    pending_font_cache_reset: bool,
-
     /// The ime on the given display.
     pub ime: Ime,
 
@@ -353,6 +339,7 @@ pub struct Display {
     wgpu_renderer: WgpuRenderer,
 
     glyph_cache: GlyphCache,
+    renderable_cells: Vec<RenderableCell>,
     meter: Meter,
 }
 
@@ -443,7 +430,6 @@ impl Display {
             font_size,
             window,
             wgpu_renderer,
-            pending_font_cache_reset: false,
             vi_highlighted_hint_age: Default::default(),
             highlighted_hint_age: Default::default(),
             vi_highlighted_hint: Default::default(),
@@ -451,6 +437,7 @@ impl Display {
             hint_mouse_point: Default::default(),
             pending_update: Default::default(),
             cursor_hidden: Default::default(),
+            renderable_cells: Default::default(),
             meter: Default::default(),
             ime: Default::default(),
         })
@@ -477,7 +464,6 @@ impl Display {
         self.wgpu_renderer.reset_glyph_cache(&mut self.glyph_cache);
     }
 
-    // 渲染器更新会在实际绘制前的 [`Self::process_renderer_update`] 中统一处理.
     /// Process update events.
     pub fn handle_update<T>(
         &mut self,
@@ -494,10 +480,6 @@ impl Display {
         let (mut cell_width, mut cell_height) =
             (self.size_info.cell_width(), self.size_info.cell_height());
 
-        if pending_update.font().is_some() || pending_update.cursor_dirty() {
-            self.pending_font_cache_reset = true;
-        }
-
         // Update font size and cell dimensions.
         if let Some(font) = pending_update.font() {
             let cell_dimensions = Self::update_font_size(&mut self.glyph_cache, config, font);
@@ -505,6 +487,7 @@ impl Display {
             cell_height = cell_dimensions.1;
 
             info!("Cell size: {cell_width} x {cell_height}");
+            self.reset_glyph_cache();
 
             // Mark entire terminal as damaged since glyph size could change without cell size
             // changes.
@@ -566,14 +549,6 @@ impl Display {
         self.size_info = new_size;
     }
 
-    /// Apply renderer updates deferred until immediately before drawing.
-    pub fn process_renderer_update(&mut self) {
-        if self.pending_font_cache_reset {
-            self.pending_font_cache_reset = false;
-            self.reset_glyph_cache();
-        }
-    }
-
     /// Draw the screen.
     ///
     /// A reference to Term whose state is being drawn must be provided.
@@ -587,13 +562,11 @@ impl Display {
         config: &UiConfig,
         search_state: &mut SearchState,
     ) -> bool {
-        // 收集可渲染内容.
-        let cell_capacity = self.size_info.columns() * self.size_info.screen_lines();
+        // 收集可渲染内容, 复用上一帧的存储以避免热路径重复分配.
+        let mut grid_cells = mem::take(&mut self.renderable_cells);
+        grid_cells.clear();
         let mut content = RenderableContent::new(config, self, &terminal, search_state);
-        let mut grid_cells = Vec::with_capacity(cell_capacity);
-        for cell in &mut content {
-            grid_cells.push(cell);
-        }
+        grid_cells.extend(&mut content);
         let selection_range = content.selection_range();
         let foreground_color = content.color(NamedColor::Foreground as usize);
         let background_color = content.color(NamedColor::Background as usize);
@@ -651,13 +624,17 @@ impl Display {
         let mut frame = match self.wgpu_renderer.begin_frame() {
             Ok(frame) => frame,
             Err(FrameUnavailable::Retry) => {
+                grid_cells.clear();
+                self.renderable_cells = grid_cells;
                 self.request_frame(scheduler);
                 return false;
             }
-            Err(FrameUnavailable::Suspended) => return false,
+            Err(FrameUnavailable::Suspended) => {
+                grid_cells.clear();
+                self.renderable_cells = grid_cells;
+                return false;
+            }
         };
-        self.wgpu_renderer
-            .clear_frame(&mut frame, background_color, config.window_opacity());
 
         let mut lines = RenderLines::new();
 
@@ -696,8 +673,9 @@ impl Display {
             self.wgpu_renderer.queue_cells(
                 TextLayer::BeforeRects,
                 &mut self.glyph_cache,
-                grid_cells,
+                grid_cells.drain(..),
             );
+            self.renderable_cells = grid_cells;
         }
 
         let mut rects = lines.rects(&metrics, &size_info);
@@ -824,8 +802,14 @@ impl Display {
             self.draw_hyperlink_preview(config, cursor_point, display_offset);
         }
 
-        self.wgpu_renderer
-            .render_frame(&mut frame, &size_info, &metrics, rects);
+        self.wgpu_renderer.render_frame(
+            &mut frame,
+            &size_info,
+            &metrics,
+            &rects,
+            background_color,
+            config.window_opacity(),
+        );
 
         // 通知 winit 即将 present.
         self.window.pre_present_notify();
@@ -996,7 +980,7 @@ impl Display {
             end,
             color: fg,
         };
-        rects.extend(underline.rects(Flags::UNDERLINE, &metrics, &self.size_info));
+        underline.push_rects(rects, Flags::UNDERLINE, &metrics, &self.size_info);
 
         let ime_popup_point = match preedit.cursor_end_offset {
             Some(cursor_end_offset) => {
