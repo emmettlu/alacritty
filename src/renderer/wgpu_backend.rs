@@ -238,6 +238,7 @@ impl WgpuRenderer {
             power_preference: wgpu::PowerPreference::LowPower,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
         }))
         .map_err(Error::RequestAdapter)?;
         info!("wgpu adapter: {:?}", adapter.get_info());
@@ -342,7 +343,7 @@ impl WgpuRenderer {
         });
 
         // 实例 buffer 的顶点布局
-        let text_instance_layout = wgpu::VertexBufferLayout {
+        let text_instance_layout = Some(wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<TextInstanceData>() as u64,
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &[
@@ -377,7 +378,7 @@ impl WgpuRenderer {
                     shader_location: 4,
                 },
             ],
-        };
+        });
 
         let create_text_pipeline = |label: &'static str,
                                     vertex_entry: &'static str,
@@ -487,7 +488,7 @@ impl WgpuRenderer {
             immediate_size: 0,
         });
 
-        let rect_vertex_layout = wgpu::VertexBufferLayout {
+        let rect_vertex_layout = Some(wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<RectVertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
@@ -504,7 +505,7 @@ impl WgpuRenderer {
                     shader_location: 1,
                 },
             ],
-        };
+        });
 
         let fs_entries = ["fs_normal", "fs_undercurl", "fs_dotted", "fs_dashed"];
         let rect_pipelines = std::array::from_fn(|i| {
@@ -628,6 +629,7 @@ impl WgpuRenderer {
         Ok(wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
+            color_space: wgpu::SurfaceColorSpace::Auto,
             view_formats: vec![],
             alpha_mode,
             width: size.width.max(1),
@@ -840,7 +842,7 @@ impl WgpuRenderer {
 
     pub(crate) fn submit_frame(&self, frame: WgpuFrame) {
         self.queue.submit(std::iter::once(frame.encoder.finish()));
-        frame.output.present();
+        self.queue.present(frame.output);
     }
 
     pub(crate) fn present_clear(&mut self, color: Rgb, alpha: f32) {

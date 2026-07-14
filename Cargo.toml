@@ -13,7 +13,7 @@ crossfont = "0"
 dirs = "6"
 log = { version = "0", features = ["serde", "std"] }
 polling = "3"
-pollster = "0"
+pollster = "1"
 regex-automata = "0"
 rustc-hash = "2"
 serde = { version = "1", features = ["derive", "rc"] }
@@ -37,7 +37,7 @@ rustix = { version = "1", default-features = false, features = [
 ] }
 signal-hook = "0"
 smithay-clipboard = { version = "0", default-features = false, features = ["dlopen"] }
-wgpu = { version = "29", default-features = false, features = ["std", "vulkan", "wgsl"] }
+wgpu = { version = "30", default-features = false, features = ["std", "vulkan", "wgsl"] }
 winit = { version = "0", default-features = false, features = [
   "rwh_06",
   "serde",
@@ -56,11 +56,11 @@ rustix = { version = "1", default-features = false, features = [
   "termios",
 ] }
 signal-hook = "0"
-wgpu = { version = "29", default-features = false, features = ["metal", "std", "wgsl"] }
+wgpu = { version = "30", default-features = false, features = ["metal", "std", "wgsl"] }
 winit = { version = "0", default-features = false, features = ["rwh_06", "serde"] }
 
 [target.'cfg(windows)'.dependencies]
-wgpu = { version = "29", default-features = false, features = ["dx12", "std", "wgsl"] }
+wgpu = { version = "30", default-features = false, features = ["dx12", "std", "wgsl"] }
 windows-sys = { version = "0", features = [
   "Win32_Foundation",
   "Win32_Graphics_Dwm",
