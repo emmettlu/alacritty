@@ -4,7 +4,9 @@ use rustix::fs::{CWD, Mode, OFlags, fcntl_getfl, fcntl_setfl, openat};
 use rustix::process::setsid;
 use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
 use rustix::stdio::{dup2_stderr, dup2_stdin, dup2_stdout};
-use rustix::termios::{InputModes, OptionalActions, Winsize, tcgetattr, tcsetattr, tcsetwinsize};
+#[cfg(target_os = "linux")]
+use rustix::termios::InputModes;
+use rustix::termios::{OptionalActions, Winsize, tcgetattr, tcsetattr, tcsetwinsize};
 use signal_hook::low_level::{pipe as signal_pipe, unregister as unregister_signal};
 use signal_hook::{SigId, consts as sigconsts};
 use std::env;
@@ -48,11 +50,26 @@ struct Passwd {
     shell: String,
 }
 
-/// Return a Passwd struct with pointers into the provided buf.
-///
-/// # Unsafety
-///
-/// If `buf` is changed while `Passwd` is alive, bad thing will almost certainly happen.
+/// Read the current user's account information from the system directory service.
+#[cfg(target_os = "macos")]
+fn get_pw_entry() -> Result<Passwd> {
+    use std::{ffi::CStr, mem::MaybeUninit, ptr};
+    let mut buffer=vec![0u8;4096];
+    loop {
+        let mut entry=MaybeUninit::<libc::passwd>::uninit();
+        let mut result=ptr::null_mut();
+        // Returned string pointers refer to buffer and are copied before it is dropped.
+        let status=unsafe { libc::getpwuid_r(libc::getuid(),entry.as_mut_ptr(),buffer.as_mut_ptr().cast(),buffer.len(),&mut result) };
+        if status==libc::ERANGE { buffer.resize(buffer.len()*2,0); continue; }
+        if status!=0 { return Err(Error::from_raw_os_error(status)); }
+        if result.is_null() { return Err(Error::other("user account not found")); }
+        let entry=unsafe { entry.assume_init() };
+        let string=|value:*const libc::c_char| if value.is_null() { String::new() } else { unsafe { CStr::from_ptr(value) }.to_string_lossy().into_owned() };
+        return Ok(Passwd { name:string(entry.pw_name),dir:string(entry.pw_dir),shell:string(entry.pw_shell) });
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
 fn get_pw_entry() -> Result<Passwd> {
     let uid = rustix::process::getuid().as_raw();
     let passwd = std::fs::read_to_string("/etc/passwd").map_err(Error::other)?;
@@ -166,9 +183,13 @@ fn default_shell_command(shell: &str, user: &str, home: &str) -> Command {
 
 /// Create a new TTY and return a handle to interact with it.
 pub fn new(config: &Options, _window_size: WindowSize, window_id: u64) -> Result<Pty> {
-    let flags = OpenptFlags::RDWR | OpenptFlags::NOCTTY | OpenptFlags::CLOEXEC;
+    let flags = OpenptFlags::RDWR | OpenptFlags::NOCTTY;
+    #[cfg(not(target_os = "macos"))]
+    let flags = flags | OpenptFlags::CLOEXEC;
 
     let master = openpt(flags).map_err(|err| Error::other(err.to_string()))?;
+    #[cfg(target_os = "macos")]
+    rustix::io::ioctl_fioclex(&master).map_err(|err| Error::other(err.to_string()))?;
     grantpt(&master).map_err(|err| Error::other(err.to_string()))?;
     unlockpt(&master).map_err(|err| Error::other(err.to_string()))?;
 
@@ -190,7 +211,9 @@ pub fn from_fd(config: &Options, window_id: u64, master: OwnedFd, slave: OwnedFd
     let slave_fd = slave.as_raw_fd();
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    if let Ok(mut tios) = tcgetattr(&master) {
+    if let Ok(tios) = tcgetattr(&master) {
+        #[cfg(target_os = "linux")]
+        let mut tios=tios;
         #[cfg(target_os = "linux")]
         {
             // Set character encoding to UTF-8

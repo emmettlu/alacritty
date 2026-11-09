@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crossfont::Size as FontSize;
+use crate::font::Size as FontSize;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 

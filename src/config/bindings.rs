@@ -7,11 +7,10 @@ use serde::de::{self, Error as SerdeError, MapAccess, Unexpected, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::rc::Rc;
 use toml::Value as SerdeValue;
-use winit::event::MouseButton;
-use winit::keyboard::{
-    Key, KeyCode, KeyLocation as WinitKeyLocation, ModifiersState, NamedKey, PhysicalKey,
+use crate::platform::event::MouseButton;
+use crate::platform::keyboard::{
+    Key, KeyCode, KeyLocation as NativeKeyLocation, ModifiersState, NamedKey, PhysicalKey,
 };
-use winit::platform::scancode::PhysicalKeyExtScancode;
 
 use crate::terminal::term::TermMode;
 use crate::terminal::vi_mode::ViMotion;
@@ -686,13 +685,13 @@ pub enum KeyLocation {
     Any,
 }
 
-impl From<WinitKeyLocation> for KeyLocation {
-    fn from(value: WinitKeyLocation) -> Self {
+impl From<NativeKeyLocation> for KeyLocation {
+    fn from(value: NativeKeyLocation) -> Self {
         match value {
-            WinitKeyLocation::Standard => KeyLocation::Standard,
-            WinitKeyLocation::Left => KeyLocation::Any,
-            WinitKeyLocation::Right => KeyLocation::Any,
-            WinitKeyLocation::Numpad => KeyLocation::Numpad,
+            NativeKeyLocation::Standard => KeyLocation::Standard,
+            NativeKeyLocation::Left => KeyLocation::Any,
+            NativeKeyLocation::Right => KeyLocation::Any,
+            NativeKeyLocation::Numpad => KeyLocation::Numpad,
         }
     }
 }
@@ -1307,7 +1306,7 @@ impl<'a> de::Deserialize<'a> for ModsWrapper {
 mod tests {
     use super::*;
 
-    use winit::keyboard::ModifiersState;
+    use crate::platform::keyboard::ModifiersState;
 
     type MockBinding = Binding<usize>;
 

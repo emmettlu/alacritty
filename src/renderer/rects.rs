@@ -2,7 +2,7 @@
 //!
 //! This module is backend-agnostic and contains no OpenGL-specific code.
 
-use crossfont::Metrics;
+use crate::font::Metrics;
 
 use crate::terminal::grid::Dimensions;
 use crate::terminal::index::{Column, Point};

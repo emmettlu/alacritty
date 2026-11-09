@@ -15,17 +15,17 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{env, f32, mem};
 
-use crossfont::Size as FontSize;
+use crate::font::Size as FontSize;
 use log::{debug, error, info, warn};
 use rustc_hash::{FxHashMap, FxHashSet};
-use winit::application::ApplicationHandler;
-use winit::event::{
-    ElementState, Event as WinitEvent, Ime, Modifiers, MouseButton, StartCause,
+use crate::platform::application::ApplicationHandler;
+use crate::platform::event::{
+    ElementState, Event as NativeEvent, Ime, Modifiers, MouseButton, StartCause,
     Touch as TouchEvent, WindowEvent,
 };
-use winit::event_loop::{ActiveEventLoop, ControlFlow, DeviceEvents, EventLoop, EventLoopProxy};
+use crate::platform::event_loop::{ActiveEventLoop, ControlFlow, DeviceEvents, EventLoop, EventLoopProxy};
 
-use winit::window::WindowId;
+use crate::platform::window::WindowId;
 
 use crate::terminal::event::{Event as TerminalEvent, EventListener, Notify};
 use crate::terminal::event_loop::Notifier;
@@ -51,7 +51,7 @@ use crate::input::{self, ActionContext as _, FONT_SIZE_STEP};
 use crate::ipc::{self, SocketReply};
 #[cfg(unix)]
 use crate::ipc::{IpcListener, SocketMessage};
-use crate::logging::LOG_TARGET_WINIT;
+use crate::logging::LOG_TARGET_WINDOW;
 use crate::message_bar::{Message, MessageBuffer};
 use crate::scheduler::{Scheduler, TimerId, Topic};
 use crate::window_context::WindowContext;
@@ -103,9 +103,9 @@ impl Processor {
         // Disable all device events, since we don't care about them.
         event_loop.listen_device_events(DeviceEvents::Never);
 
-        #[cfg(unix)]
+        #[cfg(all(unix, not(target_os = "macos")))]
         let clipboard = Clipboard::new(event_loop);
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos"))]
         let clipboard = Clipboard::new();
 
         #[cfg(unix)]
@@ -253,7 +253,7 @@ impl ApplicationHandler<Event> for Processor {
         event: WindowEvent,
     ) {
         if self.config.debug.print_events {
-            info!(target: LOG_TARGET_WINIT, "{event:?}");
+            info!(target: LOG_TARGET_WINDOW, "{event:?}");
         }
 
         // Ignore all events we do not care about.
@@ -274,7 +274,7 @@ impl ApplicationHandler<Event> for Processor {
             &self.proxy,
             &mut self.clipboard,
             &mut self.scheduler,
-            WinitEvent::WindowEvent { window_id, event },
+            NativeEvent::WindowEvent { window_id, event },
         );
 
         if is_redraw {
@@ -284,7 +284,7 @@ impl ApplicationHandler<Event> for Processor {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: Event) {
         if self.config.debug.print_events {
-            info!(target: LOG_TARGET_WINIT, "{event:?}");
+            info!(target: LOG_TARGET_WINDOW, "{event:?}");
         }
 
         // Handle events which don't mandate the WindowId.
@@ -330,7 +330,7 @@ impl ApplicationHandler<Event> for Processor {
             }
             // Process events affecting all windows.
             (payload, None) => {
-                let event = WinitEvent::UserEvent(Event::new(payload, None));
+                let event = NativeEvent::UserEvent(Event::new(payload, None));
                 for window_context in self.windows.values_mut() {
                     window_context.handle_event(
                         #[cfg(target_os = "macos")]
@@ -393,7 +393,7 @@ impl ApplicationHandler<Event> for Processor {
                         &self.proxy,
                         &mut self.clipboard,
                         &mut self.scheduler,
-                        WinitEvent::UserEvent(Event::new(payload, *window_id)),
+                        NativeEvent::UserEvent(Event::new(payload, *window_id)),
                     );
                 }
             }
@@ -402,7 +402,7 @@ impl ApplicationHandler<Event> for Processor {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if self.config.debug.print_events {
-            info!(target: LOG_TARGET_WINIT, "About to wait");
+            info!(target: LOG_TARGET_WINDOW, "About to wait");
         }
 
         // Dispatch event to all windows.
@@ -413,7 +413,7 @@ impl ApplicationHandler<Event> for Processor {
                 &self.proxy,
                 &mut self.clipboard,
                 &mut self.scheduler,
-                WinitEvent::AboutToWait,
+                NativeEvent::AboutToWait,
             );
         }
 
@@ -485,9 +485,9 @@ impl Event {
     }
 }
 
-impl From<Event> for WinitEvent<Event> {
+impl From<Event> for NativeEvent<Event> {
     fn from(event: Event) -> Self {
-        WinitEvent::UserEvent(event)
+        NativeEvent::UserEvent(event)
     }
 }
 
@@ -1818,10 +1818,10 @@ pub struct AccumulatedScroll {
 }
 
 impl input::Processor<EventProxy, ActionContext<'_, Notifier, EventProxy>> {
-    /// Handle events from winit.
-    pub fn handle_event(&mut self, event: WinitEvent<Event>) {
+    /// Handle events from native windowing.
+    pub fn handle_event(&mut self, event: NativeEvent<Event>) {
         match event {
-            WinitEvent::UserEvent(Event { payload, .. }) => match payload {
+            NativeEvent::UserEvent(Event { payload, .. }) => match payload {
                 EventType::SearchNext => self.ctx.goto_match(None),
                 EventType::Scroll(scroll) => self.ctx.scroll(scroll),
                 EventType::BlinkCursor => {
@@ -1916,7 +1916,7 @@ impl input::Processor<EventProxy, ActionContext<'_, Notifier, EventProxy>> {
                 EventType::IpcGetConfig(..) => (),
                 EventType::Message(_) | EventType::CreateWindow(_) | EventType::Frame => (),
             },
-            WinitEvent::WindowEvent { event, .. } => {
+            NativeEvent::WindowEvent { event, .. } => {
                 match event {
                     WindowEvent::CloseRequested => {
                         // User asked to close the window, so no need to hold it.
@@ -2047,13 +2047,13 @@ impl input::Processor<EventProxy, ActionContext<'_, Notifier, EventProxy>> {
                     | WindowEvent::Moved(_) => (),
                 }
             }
-            WinitEvent::Suspended
-            | WinitEvent::NewEvents { .. }
-            | WinitEvent::DeviceEvent { .. }
-            | WinitEvent::LoopExiting
-            | WinitEvent::Resumed
-            | WinitEvent::MemoryWarning
-            | WinitEvent::AboutToWait => (),
+            NativeEvent::Suspended
+            | NativeEvent::NewEvents { .. }
+            | NativeEvent::DeviceEvent { .. }
+            | NativeEvent::LoopExiting
+            | NativeEvent::Resumed
+            | NativeEvent::MemoryWarning
+            | NativeEvent::AboutToWait => (),
         }
     }
 }

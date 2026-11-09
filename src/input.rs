@@ -1,4 +1,4 @@
-//! Handle input from winit.
+//! Handle input from native windowing.
 //!
 //! Certain key combinations should send some escape sequence back to the PTY.
 //! In order to figure that out, state about which modifier keys are pressed
@@ -15,16 +15,14 @@ use std::mem;
 use std::time::{Duration, Instant};
 
 use log::debug;
-use winit::dpi::PhysicalPosition;
-use winit::event::{
+use crate::platform::dpi::PhysicalPosition;
+use crate::platform::event::{
     ElementState, Modifiers, MouseButton, MouseScrollDelta, Touch as TouchEvent, TouchPhase,
 };
 #[cfg(target_os = "macos")]
-use winit::event_loop::ActiveEventLoop;
-use winit::keyboard::ModifiersState;
-#[cfg(target_os = "macos")]
-use winit::platform::macos::ActiveEventLoopExtMacOS;
-use winit::window::CursorIcon;
+use crate::platform::event_loop::ActiveEventLoop;
+use crate::platform::keyboard::ModifiersState;
+use crate::platform::window::CursorIcon;
 
 use crate::terminal::event::EventListener;
 use crate::terminal::grid::{Dimensions, Scroll};
@@ -70,7 +68,7 @@ const MAX_TAP_DISTANCE: f64 = 20.;
 /// Threshold used for double_click/triple_click.
 const CLICK_THRESHOLD: Duration = Duration::from_millis(400);
 
-/// Processes input from winit.
+/// Processes input from native windowing.
 ///
 /// An escape sequence may be emitted in case specific keys or key combinations
 /// are activated.
@@ -464,7 +462,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
     pub fn mouse_moved(&mut self, position: PhysicalPosition<f64>) {
         let size_info = self.ctx.size_info();
 
-        let (x, y) = position.into();
+        let (x, y) = (position.x as i32, position.y as i32);
 
         let lmb_pressed = self.ctx.mouse().left_button_state == ElementState::Pressed;
         let rmb_pressed = self.ctx.mouse().right_button_state == ElementState::Pressed;
@@ -1222,9 +1220,9 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
 mod tests {
     use super::*;
 
-    use winit::event::{DeviceId, Event as WinitEvent, WindowEvent};
-    use winit::keyboard::Key;
-    use winit::window::WindowId;
+    use crate::platform::event::{DeviceId, Event as NativeEvent, WindowEvent};
+    use crate::platform::keyboard::Key;
+    use crate::platform::window::WindowId;
 
     use crate::terminal::event::Event as TerminalEvent;
 
@@ -1398,8 +1396,8 @@ mod tests {
 
                 let mut processor = Processor::new(context);
 
-                let event: WinitEvent::<TerminalEvent> = $input;
-                if let WinitEvent::WindowEvent {
+                let event: NativeEvent::<TerminalEvent> = $input;
+                if let NativeEvent::WindowEvent {
                     event: WindowEvent::MouseInput {
                         state,
                         button,
@@ -1439,7 +1437,7 @@ mod tests {
         name: single_click,
         initial_state: ClickState::None,
         initial_button: MouseButton::Other(0),
-        input: WinitEvent::WindowEvent {
+        input: NativeEvent::WindowEvent {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
@@ -1455,7 +1453,7 @@ mod tests {
         name: single_right_click,
         initial_state: ClickState::None,
         initial_button: MouseButton::Other(0),
-        input: WinitEvent::WindowEvent {
+        input: NativeEvent::WindowEvent {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Right,
@@ -1471,7 +1469,7 @@ mod tests {
         name: single_middle_click,
         initial_state: ClickState::None,
         initial_button: MouseButton::Other(0),
-        input: WinitEvent::WindowEvent {
+        input: NativeEvent::WindowEvent {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Middle,
@@ -1487,7 +1485,7 @@ mod tests {
         name: double_click,
         initial_state: ClickState::Click,
         initial_button: MouseButton::Left,
-        input: WinitEvent::WindowEvent {
+        input: NativeEvent::WindowEvent {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
@@ -1503,7 +1501,7 @@ mod tests {
         name: double_click_failed,
         initial_state: ClickState::Click,
         initial_button: MouseButton::Left,
-        input: WinitEvent::WindowEvent {
+        input: NativeEvent::WindowEvent {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
@@ -1519,7 +1517,7 @@ mod tests {
         name: triple_click,
         initial_state: ClickState::DoubleClick,
         initial_button: MouseButton::Left,
-        input: WinitEvent::WindowEvent {
+        input: NativeEvent::WindowEvent {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
@@ -1535,7 +1533,7 @@ mod tests {
         name: triple_click_failed,
         initial_state: ClickState::DoubleClick,
         initial_button: MouseButton::Left,
-        input: WinitEvent::WindowEvent {
+        input: NativeEvent::WindowEvent {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
@@ -1551,7 +1549,7 @@ mod tests {
         name: multi_click_separate_buttons,
         initial_state: ClickState::DoubleClick,
         initial_button: MouseButton::Left,
-        input: WinitEvent::WindowEvent {
+        input: NativeEvent::WindowEvent {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Right,

@@ -1,15 +1,14 @@
 use std::borrow::Cow;
 
-use winit::event::{ElementState, KeyEvent};
+use crate::platform::event::{ElementState, KeyEvent};
 #[cfg(target_os = "macos")]
-use winit::keyboard::ModifiersKeyState;
-use winit::keyboard::{Key, KeyLocation, ModifiersState, NamedKey};
+use crate::platform::keyboard::ModifiersKeyState;
 #[cfg(target_os = "macos")]
-use winit::platform::macos::OptionAsAlt;
+use crate::platform::window::OptionAsAlt;
+use crate::platform::keyboard::{Key, KeyLocation, ModifiersState, NamedKey};
 
 use crate::terminal::event::EventListener;
 use crate::terminal::term::TermMode;
-use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
 use crate::config::{Action, BindingKey, BindingMode, KeyBinding};
 use crate::display::window::ImeInhibitor;

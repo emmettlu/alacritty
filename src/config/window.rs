@@ -4,9 +4,8 @@ use log::{error, warn};
 use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 
-#[cfg(target_os = "macos")]
-use winit::platform::macos::OptionAsAlt as WinitOptionAsAlt;
-use winit::window::{Fullscreen, Theme as WinitTheme, WindowLevel as WinitWindowLevel};
+use crate::platform::window::OptionAsAlt as NativeOptionAsAlt;
+use crate::platform::window::{Fullscreen, Theme as NativeTheme, WindowLevel as NativeWindowLevel};
 
 use crate::config::LOG_TARGET_CONFIG;
 use crate::config::ui_config::{Delta, Percentage};
@@ -141,17 +140,19 @@ impl WindowConfig {
     }
 
     #[cfg(target_os = "macos")]
-    pub fn option_as_alt(&self) -> WinitOptionAsAlt {
+    pub fn option_as_alt(&self) -> NativeOptionAsAlt { self.option_as_alt }
+
+    pub fn native_option_as_alt(&self) -> NativeOptionAsAlt {
         match self.option_as_alt {
-            OptionAsAlt::OnlyLeft => WinitOptionAsAlt::OnlyLeft,
-            OptionAsAlt::OnlyRight => WinitOptionAsAlt::OnlyRight,
-            OptionAsAlt::Both => WinitOptionAsAlt::Both,
-            OptionAsAlt::None => WinitOptionAsAlt::None,
+            OptionAsAlt::OnlyLeft => NativeOptionAsAlt::OnlyLeft,
+            OptionAsAlt::OnlyRight => NativeOptionAsAlt::OnlyRight,
+            OptionAsAlt::Both => NativeOptionAsAlt::Both,
+            OptionAsAlt::None => NativeOptionAsAlt::None,
         }
     }
 
-    pub fn theme(&self) -> Option<WinitTheme> {
-        self.decorations_theme_variant.map(WinitTheme::from)
+    pub fn theme(&self) -> Option<NativeTheme> {
+        self.decorations_theme_variant.map(NativeTheme::from)
     }
 }
 
@@ -311,11 +312,11 @@ pub enum Theme {
     Dark,
 }
 
-impl From<Theme> for WinitTheme {
+impl From<Theme> for NativeTheme {
     fn from(theme: Theme) -> Self {
         match theme {
-            Theme::Light => WinitTheme::Light,
-            Theme::Dark => WinitTheme::Dark,
+            Theme::Light => NativeTheme::Light,
+            Theme::Dark => NativeTheme::Dark,
         }
     }
 }
@@ -327,11 +328,11 @@ pub enum WindowLevel {
     AlwaysOnTop,
 }
 
-impl From<WindowLevel> for WinitWindowLevel {
+impl From<WindowLevel> for NativeWindowLevel {
     fn from(level: WindowLevel) -> Self {
         match level {
-            WindowLevel::Normal => WinitWindowLevel::Normal,
-            WindowLevel::AlwaysOnTop => WinitWindowLevel::AlwaysOnTop,
+            WindowLevel::Normal => NativeWindowLevel::Normal,
+            WindowLevel::AlwaysOnTop => NativeWindowLevel::AlwaysOnTop,
         }
     }
 }

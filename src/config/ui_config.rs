@@ -10,7 +10,7 @@ use log::{error, warn};
 use serde::de::{Error as SerdeError, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use unicode_width::UnicodeWidthChar;
-use winit::keyboard::{Key, ModifiersState};
+use crate::platform::keyboard::{Key, ModifiersState};
 
 use crate::terminal::term::Config as TermConfig;
 use crate::terminal::term::search::RegexSearch;

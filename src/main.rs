@@ -8,16 +8,18 @@ use std::{env, fs};
 
 use log::info;
 
-use winit::event_loop::EventLoop;
+use crate::platform::event_loop::EventLoop;
 
 use crate::terminal::tty;
 
+mod platform;
 mod cli;
 mod clipboard;
 mod config;
 
 mod daemon;
 mod display;
+mod font;
 mod event;
 mod input;
 
@@ -63,7 +65,7 @@ impl Drop for TemporaryFiles {
 /// Creates a window, the terminal state, PTY, I/O event loop, input processor,
 /// and runs the main display loop.
 fn alacritty(mut options: Options) -> Result<(), Box<dyn Error>> {
-    // Setup winit event loop.
+    // Set up the native event loop.
     let window_event_loop = EventLoop::<Event>::with_user_event().build()?;
 
     // Initialize the logger as soon as possible as to capture output from other subsystems.
@@ -72,7 +74,7 @@ fn alacritty(mut options: Options) -> Result<(), Box<dyn Error>> {
 
     info!("Welcome to Alacritty");
     info!("Version {}", env!("VERSION"));
-    info!("Running on Windows (wgpu)");
+    info!("Running with native windowing and graphics");
 
     // Load configuration file.
     let config = config::load(&mut options);

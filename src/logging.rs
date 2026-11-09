@@ -12,7 +12,7 @@ use std::sync::OnceLock;
 
 use log::LevelFilter;
 use nanologger::{LogLevel, LogOutput, LoggerBuilder};
-use winit::event_loop::EventLoopProxy;
+use crate::platform::event_loop::EventLoopProxy;
 
 use crate::cli::Options;
 use crate::event::{Event, EventType};
@@ -24,8 +24,8 @@ const ALACRITTY_LOG_ENV: &str = "ALACRITTY_LOG";
 /// Logging target for config error messages.
 pub const LOG_TARGET_CONFIG: &str = "alacritty_config_derive";
 
-/// Logging target for winit events.
-pub const LOG_TARGET_WINIT: &str = "alacritty_winit_event";
+/// Logging target for native windowing events.
+pub const LOG_TARGET_WINDOW: &str = "alacritty_window_event";
 
 /// Name for the environment variable containing extra logging targets.
 const ALACRITTY_EXTRA_LOG_TARGETS_ENV: &str = "ALACRITTY_EXTRA_LOG_TARGETS";

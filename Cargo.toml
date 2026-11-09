@@ -4,30 +4,28 @@ version = "0.18.0"
 edition = "2024"
 readme = "README.md"
 
-[features]
-ref-tests = ["dep:serde_json"]
-
 [dependencies]
 nanoargs = "0"
 nanologger = { version = "0", features = ["log"] }
-
 
 base64 = "0"
 bitflags = { version = "2", features = ["serde"] }
 bytemuck = { version = "1", features = ["derive"] }
 
-crossfont = "0"
 dirs = "6"
 log = { version = "0", features = ["serde", "std"] }
 polling = "3"
-pollster = "1"
-regex-automata = { version = "0", default-features = false, features = [
-  "hybrid",
-  "perf-inline",
-  "std",
-  "syntax",
-  "unicode",
-] }
+regex-automata = {
+  version = "0",
+  default-features = false,
+  features = [
+    "hybrid",
+    "perf-inline",
+    "std",
+    "syntax",
+    "unicode",
+  ]
+}
 rustc-hash = "2"
 serde = { version = "1", features = ["derive", "rc"] }
 toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
@@ -35,65 +33,78 @@ unicode-width = "0"
 vte = { version = "0", default-features = false, features = ["ansi", "serde", "std"] }
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+crossfont = "0"
+ash = "0"
+rustix = {
+  version = "1",
+  default-features = false,
+  features = [
+    "event",
+    "fs",
+    "io_uring",
+    "pipe",
+    "process",
+    "pty",
+    "stdio",
+    "termios",
+  ]
+}
 serde_json = "1"
-rustix = { version = "1", default-features = false, features = [
-  "event",
-  "fs",
-  "io_uring",
-  "process",
-  "pty",
-  "stdio",
-  "termios",
-] }
 signal-hook = "0"
 smithay-clipboard = { version = "0", default-features = false, features = ["dlopen"] }
-wgpu = { version = "30", default-features = false, features = ["std", "vulkan", "wgsl"] }
-winit = { version = "0", default-features = false, features = [
-  "rwh_06",
-  "serde",
-  "wayland",
-  "x11",
-] }
-x11rb = { version = "0", features = ["all-extensions"] }
+x11rb = { version = "0", features = ["all-extensions", "allow-unsafe-code"] }
+xkbcommon-dl = "0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+libc = "0"
+cidre = { version = "0", default-features = false, features = ["app", "blocks", "ca", "cg", "ct", "macos_14_0", "mtl"] }
+rustix = {
+  version = "1",
+  default-features = false,
+  features = [
+    "event",
+    "fs",
+    "process",
+    "pty",
+    "stdio",
+    "termios",
+  ]
+}
 serde_json = "1"
-rustix = { version = "1", default-features = false, features = [
-  "event",
-  "fs",
-  "process",
-  "pty",
-  "stdio",
-  "termios",
-] }
 signal-hook = "0"
-wgpu = { version = "30", default-features = false, features = ["metal", "std", "wgsl"] }
-winit = { version = "0", default-features = false, features = ["rwh_06", "serde"] }
 
-[target.'cfg(windows)'.dependencies]
+[target."cfg(windows)".dependencies]
+crossfont = "0"
 serde_json = { version = "1", optional = true }
-wgpu = { version = "30", default-features = false, features = ["dx12", "std", "wgsl"] }
-windows-sys = { version = "0", features = [
-  "Win32_Foundation",
-  "Win32_Security",
-  "Win32_Storage_FileSystem",
-  "Win32_System_Console",
-  "Win32_System_DataExchange",
-  "Win32_System_IO",
-  "Win32_System_LibraryLoader",
-  "Win32_System_Memory",
-  "Win32_System_Ole",
-  "Win32_System_Pipes",
-  "Win32_System_Threading",
-  "Win32_System_WindowsProgramming",
-] }
-winit = { version = "0", default-features = false, features = ["rwh_06", "serde"] }
+windows = { version = "0", features = ["Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D_Fxc", "Win32_Graphics_Direct3D12", "Win32_Graphics_DirectComposition", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_UI_HiDpi", "Win32_UI_Input_Ime", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = {
+  version = "0",
+  features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_DataExchange",
+    "Win32_System_IO",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+    "Win32_System_WindowsProgramming",
+  ]
+}
 
+[build-dependencies]
+naga = { version = "30", default-features = false, features = ["wgsl-in", "spv-out"] }
+
+[features]
+ref-tests = ["dep:serde_json"]
 
 [profile.release]
-codegen-units = 1
-debug = false
-lto = true
 opt-level = "s"
-panic = "abort"
+debug = false
 strip = true
+lto = true
+panic = "abort"
+codegen-units = 1

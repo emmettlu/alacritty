@@ -2,7 +2,7 @@
 
 use std::{cmp, mem, ops};
 
-use crossfont::{BitmapBuffer, Metrics, RasterizedGlyph};
+use crate::font::{BitmapBuffer, Metrics, RasterizedGlyph};
 
 use crate::config::ui_config::Delta;
 
@@ -987,7 +987,7 @@ fn line_equation(slope: i32, x: i32, offset: i32) -> (f32, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossfont::Metrics;
+    use crate::font::Metrics;
 
     // Dummy metrics values to test builtin glyphs coverage.
     const METRICS: Metrics = Metrics {

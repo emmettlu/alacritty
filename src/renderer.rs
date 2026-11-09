@@ -1,45 +1,10 @@
-//! Renderer core for the wgpu backend.
-
+//! Native graphics backends and shared rendering primitives.
 use std::fmt;
-
-/// Shared rectangle primitives and line-shaping utilities.
 pub(crate) mod rects;
-
-/// Wgpu renderer implementation.
-pub(crate) mod wgpu_backend;
-
-/// Active glyph cache type for the renderer backend.
-pub(crate) use wgpu_backend::GlyphCache;
-
-/// Renderer initialization error.
+pub(crate) mod native;
+pub(crate) use native::GlyphCache;
 #[derive(Debug)]
-pub(crate) enum Error {
-    CreateSurface(wgpu::CreateSurfaceError),
-    RequestAdapter(wgpu::RequestAdapterError),
-    RequestDevice(wgpu::RequestDeviceError),
-    MissingSurfaceCapability(&'static str),
-}
-
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::CreateSurface(err) => Some(err),
-            Self::RequestAdapter(err) => Some(err),
-            Self::RequestDevice(err) => Some(err),
-            Self::MissingSurfaceCapability(_) => None,
-        }
-    }
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::CreateSurface(err) => write!(f, "failed to create surface: {err}"),
-            Self::RequestAdapter(err) => write!(f, "failed to request adapter: {err}"),
-            Self::RequestDevice(err) => write!(f, "failed to request device: {err}"),
-            Self::MissingSurfaceCapability(capability) => {
-                write!(f, "surface exposes no {capability}")
-            }
-        }
-    }
-}
+pub(crate) struct Error(pub String);
+impl std::error::Error for Error {}
+impl fmt::Display for Error { fn fmt(&self,f:&mut fmt::Formatter<'_>)->fmt::Result { self.0.fmt(f) } }
+impl From<std::io::Error> for Error { fn from(err:std::io::Error)->Self { Self(err.to_string()) } }

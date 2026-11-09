@@ -15,9 +15,9 @@ use log::error;
 use log::info;
 #[cfg(feature = "ref-tests")]
 use serde_json as json;
-use winit::event::{Event as WinitEvent, Modifiers, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
-use winit::window::WindowId;
+use crate::platform::event::{Event as NativeEvent, Modifiers, WindowEvent};
+use crate::platform::event_loop::{ActiveEventLoop, EventLoopProxy};
+use crate::platform::window::WindowId;
 
 use crate::terminal::event::Event as TerminalEvent;
 use crate::terminal::event_loop::{EventLoop as PtyEventLoop, Msg, Notifier};
@@ -46,7 +46,7 @@ pub struct WindowContext {
     pub message_buffer: MessageBuffer,
     pub display: Display,
     pub dirty: bool,
-    event_queue: Vec<WinitEvent<Event>>,
+    event_queue: Vec<NativeEvent<Event>>,
     terminal: Arc<FairMutex<Term<EventProxy>>>,
     cursor_blink_timed_out: bool,
     prev_bell_cmd: Option<Instant>,
@@ -233,11 +233,11 @@ impl WindowContext {
         event_proxy: &EventLoopProxy<Event>,
         clipboard: &mut Clipboard,
         scheduler: &mut Scheduler,
-        event: WinitEvent<Event>,
+        event: NativeEvent<Event>,
     ) {
         match event {
-            WinitEvent::AboutToWait
-            | WinitEvent::WindowEvent {
+            NativeEvent::AboutToWait
+            | NativeEvent::WindowEvent {
                 event: WindowEvent::RedrawRequested,
                 ..
             } => {
@@ -317,7 +317,7 @@ impl WindowContext {
             && !self.occluded
             && !matches!(
                 event,
-                WinitEvent::WindowEvent {
+                NativeEvent::WindowEvent {
                     event: WindowEvent::RedrawRequested,
                     ..
                 }

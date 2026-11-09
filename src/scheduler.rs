@@ -4,8 +4,8 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use log::debug;
-use winit::event_loop::EventLoopProxy;
-use winit::window::WindowId;
+use crate::platform::event_loop::EventLoopProxy;
+use crate::platform::window::WindowId;
 
 use crate::event::Event;
 

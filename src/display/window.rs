@@ -1,40 +1,25 @@
 use std::fmt::{self, Display, Formatter};
-use std::sync::Arc;
+use std::rc::Rc;
 
 use bitflags::bitflags;
 
-use winit::dpi::{PhysicalPosition, PhysicalSize};
-use winit::event_loop::ActiveEventLoop;
-use winit::monitor::MonitorHandle;
-#[cfg(target_os = "macos")]
-use winit::platform::macos::{OptionAsAlt, WindowAttributesExtMacOS, WindowExtMacOS};
-#[cfg(windows)]
-use winit::platform::windows::{IconExtWindows, WindowAttributesExtWindows};
-use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-
-#[cfg(unix)]
-use winit::window::Theme;
-use winit::window::{
-    CursorIcon, Fullscreen, ImePurpose, UserAttentionType, Window as WinitWindow, WindowAttributes,
-    WindowId,
-};
+use crate::platform::dpi::{PhysicalPosition, PhysicalSize};
+use crate::platform::event_loop::ActiveEventLoop;
+use crate::platform::monitor::MonitorHandle;
+use crate::platform::window::{CursorIcon, Fullscreen, ImePurpose, OptionAsAlt, Theme, UserAttentionType, Window as NativeWindow, WindowAttributes, WindowId};
 
 use crate::terminal::index::Point;
 
 use crate::cli::WindowOptions;
 use crate::config::UiConfig;
-use crate::config::window::{Decorations, Identity, WindowConfig};
+use crate::config::window::Identity;
 use crate::display::SizeInfo;
-
-/// This should match the definition of IDI_ICON from `alacritty.rc`.
-#[cfg(windows)]
-const IDI_ICON: u16 = 0x101;
 
 /// Window errors.
 #[derive(Debug)]
 pub enum Error {
     /// Error creating the window.
-    WindowCreation(winit::error::OsError),
+    WindowCreation(std::io::Error),
 }
 
 /// Result of fallible operations concerning a Window.
@@ -56,8 +41,8 @@ impl Display for Error {
     }
 }
 
-impl From<winit::error::OsError> for Error {
-    fn from(val: winit::error::OsError) -> Self {
+impl From<std::io::Error> for Error {
+    fn from(val: std::io::Error) -> Self {
         Error::WindowCreation(val)
     }
 }
@@ -78,7 +63,7 @@ pub struct Window {
     /// Hold the window when terminal exits.
     pub hold: bool,
 
-    window: Arc<WinitWindow>,
+    window: Rc<NativeWindow>,
 
     /// Current window title.
     title: String,
@@ -100,37 +85,29 @@ impl Window {
         options: &mut WindowOptions,
     ) -> Result<Window> {
         let identity = identity.clone();
-        let mut window_attributes = Window::get_platform_window(
-            &identity,
-            &config.window,
-            #[cfg(target_os = "macos")]
-            &options.window_tabbing_id.take(),
-        );
-
-        if let Some(position) = config.window.position {
-            window_attributes = window_attributes
-                .with_position(PhysicalPosition::<i32>::from((position.x, position.y)));
-        }
-
-        window_attributes = window_attributes
-            .with_title(&identity.title)
-            .with_theme(config.window.theme())
-            .with_visible(false)
-            .with_transparent(config.window_opacity() < 1.);
-
-        #[cfg(windows)]
-        {
-            window_attributes = window_attributes
-                .with_no_redirection_bitmap(config.window.opacity.as_f32() < 1.0)
-                .with_blur(config.window.blur);
-        }
-
-        window_attributes = window_attributes
-            .with_maximized(config.window.maximized())
-            .with_fullscreen(config.window.fullscreen())
-            .with_window_level(config.window.level.into());
-
-        let window = Arc::new(event_loop.create_window(window_attributes)?);
+        let window_attributes = WindowAttributes {
+            title: identity.title.clone(),
+            position: config.window.position.map(|p| PhysicalPosition::new(p.x,p.y)),
+            size: PhysicalSize::new(800,600),
+            decorations: config.window.decorations,
+            transparent: config.window_opacity() < 1.0,
+            blur: config.window.blur,
+            maximized: config.window.maximized(),
+            fullscreen: config.window.fullscreen().is_some(),
+            level: config.window.level.into(),
+            theme: config.window.theme(),
+            option_as_alt: config.window.native_option_as_alt(),
+            tabbing_id: {
+                #[cfg(target_os = "macos")]
+                { options.window_tabbing_id.take() }
+                #[cfg(not(target_os = "macos"))]
+                { None }
+            },
+            class: identity.class.clone(),
+            #[cfg(all(unix, not(target_os = "macos")))]
+            embed: config.window.embed,
+        };
+        let window = Rc::new(event_loop.create_window(window_attributes)?);
 
         // Text cursor.
         let current_mouse_cursor = CursorIcon::Text;
@@ -145,10 +122,7 @@ impl Window {
 
         let scale_factor = window.scale_factor();
         log::info!("Window scale factor: {scale_factor}");
-        let is_x11 = matches!(
-            window.window_handle().unwrap().as_raw(),
-            RawWindowHandle::Xlib(_)
-        );
+        let is_x11 = cfg!(all(unix, not(target_os = "macos")) );
 
         Ok(Self {
             hold: options.terminal_options.hold,
@@ -222,50 +196,6 @@ impl Window {
         self.mouse_visible
     }
 
-    #[cfg(windows)]
-    pub fn get_platform_window(_: &Identity, window_config: &WindowConfig) -> WindowAttributes {
-        let icon = winit::window::Icon::from_resource(IDI_ICON, None);
-
-        WinitWindow::default_attributes()
-            .with_decorations(window_config.decorations != Decorations::None)
-            .with_window_icon(icon.as_ref().ok().cloned())
-            .with_taskbar_icon(icon.ok())
-    }
-
-    #[cfg(target_os = "macos")]
-    pub fn get_platform_window(
-        _: &Identity,
-        window_config: &WindowConfig,
-        tabbing_id: &Option<String>,
-    ) -> WindowAttributes {
-        let mut window =
-            WinitWindow::default_attributes().with_option_as_alt(window_config.option_as_alt());
-
-        if let Some(tabbing_id) = tabbing_id {
-            window = window.with_tabbing_identifier(tabbing_id);
-        }
-
-        match window_config.decorations {
-            Decorations::Full => window,
-            Decorations::Transparent => window
-                .with_title_hidden(true)
-                .with_titlebar_transparent(true)
-                .with_fullsize_content_view(true),
-            Decorations::Buttonless => window
-                .with_title_hidden(true)
-                .with_titlebar_buttons_hidden(true)
-                .with_titlebar_transparent(true)
-                .with_fullsize_content_view(true),
-            Decorations::None => window.with_titlebar_hidden(true),
-        }
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    pub fn get_platform_window(_: &Identity, window_config: &WindowConfig) -> WindowAttributes {
-        WinitWindow::default_attributes()
-            .with_decorations(window_config.decorations != Decorations::None)
-    }
-
     pub fn set_urgent(&self, is_urgent: bool) {
         let attention = if is_urgent {
             Some(UserAttentionType::Critical)
@@ -280,9 +210,9 @@ impl Window {
         self.window.id()
     }
 
-    /// Clone the owned winit window handle for surface creation.
-    pub fn surface_target(&self) -> Arc<WinitWindow> {
-        Arc::clone(&self.window)
+    /// Clone the native window handle for surface creation.
+    pub fn surface_target(&self) -> Rc<NativeWindow> {
+        Rc::clone(&self.window)
     }
 
     #[cfg(unix)]

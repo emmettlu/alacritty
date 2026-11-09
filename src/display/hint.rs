@@ -4,7 +4,7 @@ use std::iter;
 use std::rc::Rc;
 
 use rustc_hash::FxHashSet;
-use winit::keyboard::ModifiersState;
+use crate::platform::keyboard::ModifiersState;
 
 use crate::terminal::grid::{BidirectionalIterator, Dimensions};
 use crate::terminal::index::{Boundary, Column, Direction, Line, Point};

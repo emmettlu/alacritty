@@ -9,11 +9,11 @@ use std::time::{Duration, Instant};
 
 use log::{debug, info, warn};
 use std::sync::MutexGuard;
-use winit::dpi::PhysicalSize;
-use winit::keyboard::ModifiersState;
-use winit::window::CursorIcon;
+use crate::platform::dpi::PhysicalSize;
+use crate::platform::keyboard::ModifiersState;
+use crate::platform::window::CursorIcon;
 
-use crossfont::{Rasterize, Rasterizer, Size as FontSize};
+use crate::font::{Rasterize, Rasterizer, Size as FontSize};
 use unicode_width::UnicodeWidthChar;
 
 use crate::terminal::event::{EventListener, OnResize, WindowSize};
@@ -40,7 +40,7 @@ use crate::display::window::Window;
 use crate::event::{Event, EventType, Mouse, SearchState};
 use crate::message_bar::{MessageBuffer, MessageType};
 use crate::renderer::rects::{RenderLine, RenderLines, RenderRect};
-use crate::renderer::wgpu_backend::{FrameUnavailable, TextLayer, WgpuRenderer};
+use crate::renderer::native::{FrameUnavailable, TextLayer, NativeRenderer};
 use crate::renderer::{self, GlyphCache};
 use crate::scheduler::{Scheduler, TimerId, Topic};
 use crate::string::{ShortenDirection, StrShortener};
@@ -67,7 +67,7 @@ const SHORTENER: char = '…';
 #[derive(Debug)]
 pub enum Error {
     /// Error dealing with fonts.
-    Font(crossfont::Error),
+    Font(crate::font::Error),
 
     /// Error in renderer.
     Render(renderer::Error),
@@ -91,8 +91,8 @@ impl fmt::Display for Error {
     }
 }
 
-impl From<crossfont::Error> for Error {
-    fn from(val: crossfont::Error) -> Self {
+impl From<crate::font::Error> for Error {
+    fn from(val: crate::font::Error) -> Self {
         Error::Font(val)
     }
 }
@@ -335,8 +335,8 @@ pub struct Display {
     // Mouse point position when highlighting hints.
     hint_mouse_point: Option<Point>,
 
-    // --- wgpu 渲染器 ---
-    wgpu_renderer: WgpuRenderer,
+    // --- native GPU 渲染器 ---
+    renderer: NativeRenderer,
 
     glyph_cache: GlyphCache,
     renderable_cells: Vec<RenderableCell>,
@@ -365,12 +365,12 @@ impl Display {
         }
 
         let viewport_size = window.inner_size();
-        let mut wgpu_renderer =
-            WgpuRenderer::new(window.surface_target(), config.window_opacity())?;
+        let mut renderer =
+            NativeRenderer::new(window.surface_target(), config.window_opacity())?;
 
         // 预加载常用字形.
         debug!("Filling glyph cache with common glyphs");
-        wgpu_renderer.reset_glyph_cache(&mut glyph_cache);
+        renderer.reset_glyph_cache(&mut glyph_cache);
 
         let padding = config.window.padding(window.scale_factor as f32);
 
@@ -401,7 +401,7 @@ impl Display {
         let background_color = config.colors.primary.background;
         let skip_initial_present = config.window.maximized() && config.window_opacity() < 1.0;
         if !skip_initial_present {
-            wgpu_renderer.present_clear(background_color, config.window_opacity());
+            renderer.present_clear(background_color, config.window_opacity());
         }
 
         // Set or clear window resize increments.
@@ -431,7 +431,7 @@ impl Display {
             size_info,
             font_size,
             window,
-            wgpu_renderer,
+            renderer,
             vi_highlighted_hint_age: Default::default(),
             highlighted_hint_age: Default::default(),
             vi_highlighted_hint: Default::default(),
@@ -465,7 +465,7 @@ impl Display {
 
     /// Reset glyph cache.
     fn reset_glyph_cache(&mut self) {
-        self.wgpu_renderer.reset_glyph_cache(&mut self.glyph_cache);
+        self.renderer.reset_glyph_cache(&mut self.glyph_cache);
     }
 
     /// Process update events.
@@ -625,7 +625,7 @@ impl Display {
         self.damage_tracker
             .damage_selection(selection_range, display_offset);
 
-        let mut frame = match self.wgpu_renderer.begin_frame() {
+        let mut frame = match self.renderer.begin_frame() {
             Ok(frame) => frame,
             Err(FrameUnavailable::Retry) => {
                 grid_cells.clear();
@@ -675,7 +675,7 @@ impl Display {
                 lines.update(cell);
             }
 
-            self.wgpu_renderer.queue_cells(
+            self.renderer.queue_cells(
                 TextLayer::BeforeRects,
                 &mut self.glyph_cache,
                 grid_cells.drain(..),
@@ -792,7 +792,7 @@ impl Display {
             let fg = config.colors.primary.background;
             for (i, message_text) in text.iter().enumerate() {
                 let point = Point::new(start_line + i, Column(0));
-                self.wgpu_renderer.queue_string(
+                self.renderer.queue_string(
                     TextLayer::AfterRects,
                     point,
                     fg,
@@ -810,7 +810,7 @@ impl Display {
             self.draw_hyperlink_preview(config, cursor_point, display_offset);
         }
 
-        self.wgpu_renderer.render_frame(
+        self.renderer.render_frame(
             &mut frame,
             &size_info,
             &metrics,
@@ -820,9 +820,9 @@ impl Display {
         );
         self.render_rects = rects;
 
-        // 通知 winit 即将 present.
+        // 通知 native windowing 即将 present.
         self.window.pre_present_notify();
-        self.wgpu_renderer.submit_frame(frame);
+        self.renderer.submit_frame(frame);
 
         self.request_frame(scheduler);
         self.damage_tracker.swap_damage();
@@ -840,7 +840,7 @@ impl Display {
         let point = Point::new(self.size_info.screen_lines(), Column(0));
         let fg = config.colors.footer_bar_foreground();
         let bg = config.colors.footer_bar_background();
-        self.wgpu_renderer.queue_string(
+        self.renderer.queue_string(
             TextLayer::BeforeRects,
             point,
             fg,
@@ -864,7 +864,7 @@ impl Display {
         self.damage_tracker.frame().damage_line(damage);
         self.damage_tracker.next_frame().damage_line(damage);
 
-        self.wgpu_renderer.queue_string(
+        self.renderer.queue_string(
             TextLayer::AfterRects,
             point,
             fg,
@@ -902,7 +902,7 @@ impl Display {
             .unwrap_or(colors.primary.foreground);
 
         if obstructed_column.is_none_or(|obstructed_column| obstructed_column < column) {
-            self.wgpu_renderer.queue_string(
+            self.renderer.queue_string(
                 TextLayer::BeforeRects,
                 point,
                 fg,
@@ -959,7 +959,7 @@ impl Display {
         let end = Point::new(point.line, Column(end - 1));
         let metrics = self.glyph_cache.font_metrics();
 
-        self.wgpu_renderer.queue_string(
+        self.renderer.queue_string(
             TextLayer::BeforeRects,
             start,
             fg,
@@ -1055,7 +1055,7 @@ impl Display {
             self.damage_tracker.frame().damage_line(damage);
             self.damage_tracker.next_frame().damage_line(damage);
 
-            self.wgpu_renderer.queue_string(
+            self.renderer.queue_string(
                 TextLayer::AfterRects,
                 point,
                 fg,
@@ -1368,7 +1368,7 @@ impl FrameTimer {
 ///
 /// This will return a tuple of the cell width and height.
 #[inline]
-fn compute_cell_size(config: &UiConfig, metrics: &crossfont::Metrics) -> (f32, f32) {
+fn compute_cell_size(config: &UiConfig, metrics: &crate::font::Metrics) -> (f32, f32) {
     let offset_x = f64::from(config.font.offset.x);
     let offset_y = f64::from(config.font.offset.y);
     (

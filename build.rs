@@ -17,106 +17,28 @@ fn main() {
 }
 
 fn compile_shaders() {
-    let manifest_dir = env::var_os("CARGO_MANIFEST_DIR")
-        .map(PathBuf::from)
-        .expect("CARGO_MANIFEST_DIR is set by Cargo");
-    let out_dir = env::var_os("OUT_DIR")
-        .map(PathBuf::from)
-        .expect("OUT_DIR is set by Cargo");
-
-    for filename in ["text.wgsl", "rect.wgsl"] {
-        let relative_path = format!("wgsl/{filename}");
-        let source_path = manifest_dir.join(&relative_path);
-        println!("cargo:rerun-if-changed={relative_path}");
-
-        let source = fs::read_to_string(&source_path).unwrap_or_else(|err| {
-            panic!("failed to read {}: {err}", source_path.display());
-        });
-        let minified = minify_wgsl(&source);
-        let output_path = out_dir.join(filename);
-        fs::write(&output_path, minified).unwrap_or_else(|err| {
-            panic!("failed to write {}: {err}", output_path.display());
-        });
-    }
-}
-
-fn minify_wgsl(source: &str) -> String {
-    let source = strip_wgsl_comments(source);
-    let mut output = String::with_capacity(source.len());
-
-    for line in source
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-    {
-        if !output.is_empty() {
-            output.push('\n');
-        }
-
-        let mut pending_space = false;
-        for character in line.chars() {
-            if character.is_whitespace() {
-                pending_space = true;
-            } else {
-                if pending_space && !output.ends_with('\n') {
-                    output.push(' ');
-                }
-                output.push(character);
-                pending_space = false;
-            }
-        }
+    println!("cargo:rerun-if-changed=src/renderer/native/terminal.metal");
+    println!("cargo:rerun-if-changed=src/renderer/native/terminal.hlsl");
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux") {
+        return;
     }
 
-    output
-}
-
-fn strip_wgsl_comments(source: &str) -> String {
-    let mut output = String::with_capacity(source.len());
-    let mut characters = source.chars().peekable();
-    let mut line_comment = false;
-    let mut block_depth = 0_u32;
-
-    while let Some(character) = characters.next() {
-        if line_comment {
-            if character == '\n' {
-                output.push(character);
-                line_comment = false;
-            }
-            continue;
-        }
-
-        if block_depth > 0 {
-            match (character, characters.peek()) {
-                ('/', Some('*')) => {
-                    characters.next();
-                    block_depth += 1;
-                }
-                ('*', Some('/')) => {
-                    characters.next();
-                    block_depth -= 1;
-                }
-                _ => {}
-            }
-            continue;
-        }
-
-        match (character, characters.peek()) {
-            ('/', Some('/')) => {
-                characters.next();
-                output.push(' ');
-                line_comment = true;
-            }
-            ('/', Some('*')) => {
-                characters.next();
-                output.push(' ');
-                block_depth = 1;
-            }
-            _ => output.push(character),
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
+    for (file, entries) in [
+        ("wgsl/text.wgsl", &[("vs_bg", naga::ShaderStage::Vertex), ("vs_text", naga::ShaderStage::Vertex), ("fs_bg", naga::ShaderStage::Fragment), ("fs_text", naga::ShaderStage::Fragment)][..]),
+        ("wgsl/rect.wgsl", &[("vs_main", naga::ShaderStage::Vertex), ("fs_main", naga::ShaderStage::Fragment)][..]),
+    ] {
+        println!("cargo:rerun-if-changed={file}");
+        let source = fs::read_to_string(file).expect("read Vulkan shader source");
+        let module = naga::front::wgsl::parse_str(&source).expect("parse Vulkan shader");
+        let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&module).expect("validate Vulkan shader");
+        for (entry, stage) in entries {
+            let pipeline = naga::back::spv::PipelineOptions { shader_stage: *stage, entry_point: (*entry).into() };
+            let words = naga::back::spv::write_vec(&module, &info, &naga::back::spv::Options::default(), Some(&pipeline)).expect("compile Vulkan shader");
+            let bytes: Vec<_> = words.into_iter().flat_map(u32::to_le_bytes).collect();
+            fs::write(out_dir.join(format!("{entry}.spv")), bytes).expect("write Vulkan shader");
         }
     }
-
-    assert_eq!(block_depth, 0, "unterminated WGSL block comment");
-    output
 }
 
 #[cfg(windows)]

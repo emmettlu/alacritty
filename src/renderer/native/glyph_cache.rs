@@ -1,8 +1,8 @@
-//! Glyph rasterization and caching for the wgpu renderer.
+//! Glyph rasterization and caching for the native renderer.
 
 use std::collections::HashMap;
 
-use crossfont::{
+use crate::font::{
     Error as RasterizerError, FontDesc, FontKey, GlyphKey, Metrics, Rasterize, RasterizedGlyph,
     Rasterizer, Size, Slant, Style, Weight,
 };
@@ -40,7 +40,7 @@ pub(crate) struct GlyphCache {
     bold_italic_key: FontKey,
 
     /// 字体大小.
-    font_size: crossfont::Size,
+    font_size: crate::font::Size,
 
     /// 字体偏移.
     font_offset: Delta<i8>,
@@ -59,7 +59,7 @@ impl GlyphCache {
     pub(crate) fn new(
         mut rasterizer: Rasterizer,
         font: &Font,
-    ) -> Result<GlyphCache, crossfont::Error> {
+    ) -> Result<GlyphCache, crate::font::Error> {
         let (regular, bold, italic, bold_italic) = Self::compute_font_keys(font, &mut rasterizer)?;
 
         let metrics = GlyphCache::load_font_metrics(&mut rasterizer, font, regular)?;
@@ -83,7 +83,7 @@ impl GlyphCache {
         rasterizer: &mut Rasterizer,
         font: &Font,
         key: FontKey,
-    ) -> Result<Metrics, crossfont::Error> {
+    ) -> Result<Metrics, crate::font::Error> {
         // 在调用 metrics 之前需要至少加载一个字形.
         rasterizer.get_glyph(GlyphKey {
             font_key: key,
@@ -107,7 +107,7 @@ impl GlyphCache {
     fn compute_font_keys(
         font: &Font,
         rasterizer: &mut Rasterizer,
-    ) -> Result<(FontKey, FontKey, FontKey, FontKey), crossfont::Error> {
+    ) -> Result<(FontKey, FontKey, FontKey, FontKey), crate::font::Error> {
         let size = font.size();
 
         // 加载常规字体.
@@ -146,7 +146,7 @@ impl GlyphCache {
         rasterizer: &mut Rasterizer,
         description: &FontDesc,
         size: Size,
-    ) -> Result<FontKey, crossfont::Error> {
+    ) -> Result<FontKey, crate::font::Error> {
         match rasterizer.load_font(description, size) {
             Ok(font) => Ok(font),
             Err(err) => {
@@ -268,7 +268,7 @@ impl GlyphCache {
     /// 更新内部字体大小.
     ///
     /// 注意: 要重新加载渲染器的字体, 之后应调用 [`Self::reset_glyph_cache`].
-    pub(crate) fn update_font_size(&mut self, font: &Font) -> Result<(), crossfont::Error> {
+    pub(crate) fn update_font_size(&mut self, font: &Font) -> Result<(), crate::font::Error> {
         // 更新 dpi 缩放.
         self.font_offset = font.offset;
         self.glyph_offset = font.glyph_offset;
@@ -292,7 +292,7 @@ impl GlyphCache {
         Ok(())
     }
 
-    pub(crate) fn font_metrics(&self) -> crossfont::Metrics {
+    pub(crate) fn font_metrics(&self) -> crate::font::Metrics {
         self.metrics
     }
 

@@ -2,8 +2,6 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-
-
 use crate::config::ui_config::Program;
 use crate::display::color::Rgb;
 
