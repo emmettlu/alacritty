@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-
 use crate::terminal::vte::ansi::{CursorShape as VteCursorShape, CursorStyle as VteCursorStyle};
 
 use crate::config::ui_config::Percentage;
@@ -105,9 +104,13 @@ impl ConfigCursorStyle {
 impl From<ConfigCursorStyle> for VteCursorStyle {
     fn from(config_style: ConfigCursorStyle) -> Self {
         match config_style {
-            ConfigCursorStyle::Shape(shape) => Self { shape: shape.into(), blinking: false },
-            ConfigCursorStyle::WithBlinking { shape, blinking } => {
-                Self { shape: shape.into(), blinking: blinking.into() }
+            ConfigCursorStyle::Shape(shape) => Self {
+                shape: shape.into(),
+                blinking: false,
+            },
+            ConfigCursorStyle::WithBlinking { shape, blinking } => Self {
+                shape: shape.into(),
+                blinking: blinking.into(),
             },
         }
     }

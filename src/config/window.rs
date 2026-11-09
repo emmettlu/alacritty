@@ -140,7 +140,9 @@ impl WindowConfig {
     }
 
     #[cfg(target_os = "macos")]
-    pub fn option_as_alt(&self) -> NativeOptionAsAlt { self.option_as_alt }
+    pub fn option_as_alt(&self) -> NativeOptionAsAlt {
+        self.option_as_alt
+    }
 
     pub fn native_option_as_alt(&self) -> NativeOptionAsAlt {
         match self.option_as_alt {

@@ -7,11 +7,11 @@ use std::mem;
 use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
 
-use log::{debug, info, warn};
-use std::sync::MutexGuard;
 use crate::platform::dpi::PhysicalSize;
 use crate::platform::keyboard::ModifiersState;
 use crate::platform::window::CursorIcon;
+use log::{debug, info, warn};
+use std::sync::MutexGuard;
 
 use crate::font::{Rasterize, Rasterizer, Size as FontSize};
 use unicode_width::UnicodeWidthChar;
@@ -39,8 +39,8 @@ use crate::display::meter::Meter;
 use crate::display::window::Window;
 use crate::event::{Event, EventType, Mouse, SearchState};
 use crate::message_bar::{MessageBuffer, MessageType};
+use crate::renderer::native::{FrameUnavailable, NativeRenderer, TextLayer};
 use crate::renderer::rects::{RenderLine, RenderLines, RenderRect};
-use crate::renderer::native::{FrameUnavailable, TextLayer, NativeRenderer};
 use crate::renderer::{self, GlyphCache};
 use crate::scheduler::{Scheduler, TimerId, Topic};
 use crate::string::{ShortenDirection, StrShortener};
@@ -365,8 +365,7 @@ impl Display {
         }
 
         let viewport_size = window.inner_size();
-        let mut renderer =
-            NativeRenderer::new(window.surface_target(), config.window_opacity())?;
+        let mut renderer = NativeRenderer::new(window.surface_target(), config.window_opacity())?;
 
         // 预加载常用字形.
         debug!("Filling glyph cache with common glyphs");

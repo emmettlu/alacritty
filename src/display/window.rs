@@ -6,7 +6,10 @@ use bitflags::bitflags;
 use crate::platform::dpi::{PhysicalPosition, PhysicalSize};
 use crate::platform::event_loop::ActiveEventLoop;
 use crate::platform::monitor::MonitorHandle;
-use crate::platform::window::{CursorIcon, Fullscreen, ImePurpose, OptionAsAlt, Theme, UserAttentionType, Window as NativeWindow, WindowAttributes, WindowId};
+use crate::platform::window::{
+    CursorIcon, Fullscreen, ImePurpose, OptionAsAlt, Theme, UserAttentionType,
+    Window as NativeWindow, WindowAttributes, WindowId,
+};
 
 use crate::terminal::index::Point;
 
@@ -87,8 +90,11 @@ impl Window {
         let identity = identity.clone();
         let window_attributes = WindowAttributes {
             title: identity.title.clone(),
-            position: config.window.position.map(|p| PhysicalPosition::new(p.x,p.y)),
-            size: PhysicalSize::new(800,600),
+            position: config
+                .window
+                .position
+                .map(|p| PhysicalPosition::new(p.x, p.y)),
+            size: PhysicalSize::new(800, 600),
             decorations: config.window.decorations,
             transparent: config.window_opacity() < 1.0,
             blur: config.window.blur,
@@ -99,9 +105,13 @@ impl Window {
             option_as_alt: config.window.native_option_as_alt(),
             tabbing_id: {
                 #[cfg(target_os = "macos")]
-                { options.window_tabbing_id.take() }
+                {
+                    options.window_tabbing_id.take()
+                }
                 #[cfg(not(target_os = "macos"))]
-                { None }
+                {
+                    None
+                }
             },
             class: identity.class.clone(),
             #[cfg(all(unix, not(target_os = "macos")))]
@@ -122,7 +132,7 @@ impl Window {
 
         let scale_factor = window.scale_factor();
         log::info!("Window scale factor: {scale_factor}");
-        let is_x11 = cfg!(all(unix, not(target_os = "macos")) );
+        let is_x11 = cfg!(all(unix, not(target_os = "macos")));
 
         Ok(Self {
             hold: options.terminal_options.hold,

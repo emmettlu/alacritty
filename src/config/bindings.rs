@@ -2,15 +2,15 @@
 
 use std::fmt::{self, Debug, Display};
 
+use crate::platform::event::MouseButton;
+use crate::platform::keyboard::{
+    Key, KeyCode, KeyLocation as NativeKeyLocation, ModifiersState, NamedKey, PhysicalKey,
+};
 use bitflags::bitflags;
 use serde::de::{self, Error as SerdeError, MapAccess, Unexpected, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::rc::Rc;
 use toml::Value as SerdeValue;
-use crate::platform::event::MouseButton;
-use crate::platform::keyboard::{
-    Key, KeyCode, KeyLocation as NativeKeyLocation, ModifiersState, NamedKey, PhysicalKey,
-};
 
 use crate::terminal::term::TermMode;
 use crate::terminal::vi_mode::ViMotion;

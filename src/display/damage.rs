@@ -172,7 +172,12 @@ impl FrameDamage {
         height: i32,
     ) {
         let y = viewport_y_to_damage_y(size_info, y, height);
-        self.rects.push(Rect { x, y, width, height });
+        self.rects.push(Rect {
+            x,
+            y,
+            width,
+            height,
+        });
     }
 
     fn reset(&mut self, num_lines: usize, num_cols: usize) {
@@ -218,8 +223,16 @@ mod tests {
         frame_damage.add_viewport_rect(&size_info, x, y, width, height);
         assert_eq!(
             frame_damage.rects[0],
-            Rect { x, y: viewport_height as i32 - y - height, width, height }
+            Rect {
+                x,
+                y: viewport_height as i32 - y - height,
+                width,
+                height
+            }
         );
-        assert_eq!(frame_damage.rects[0].y, viewport_y_to_damage_y(&size_info, y, height));
+        assert_eq!(
+            frame_damage.rects[0].y,
+            viewport_y_to_damage_y(&size_info, y, height)
+        );
     }
 }

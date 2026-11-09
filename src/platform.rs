@@ -8,13 +8,21 @@ pub mod keyboard;
 pub mod window;
 pub mod monitor {
     #[derive(Debug, Clone)]
-    pub struct MonitorHandle { pub refresh_rate: u32 }
+    pub struct MonitorHandle {
+        pub refresh_rate: u32,
+    }
     impl MonitorHandle {
-        pub fn refresh_rate_millihertz(&self) -> Option<u32> { Some(self.refresh_rate) }
+        pub fn refresh_rate_millihertz(&self) -> Option<u32> {
+            Some(self.refresh_rate)
+        }
     }
 }
 pub mod application {
-    use super::{event::{StartCause, WindowEvent}, event_loop::ActiveEventLoop, window::WindowId};
+    use super::{
+        event::{StartCause, WindowEvent},
+        event_loop::ActiveEventLoop,
+        window::WindowId,
+    };
     pub trait ApplicationHandler<T> {
         fn resumed(&mut self, _: &ActiveEventLoop) {}
         fn new_events(&mut self, _: &ActiveEventLoop, _: StartCause) {}

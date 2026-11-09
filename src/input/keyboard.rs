@@ -3,9 +3,9 @@ use std::borrow::Cow;
 use crate::platform::event::{ElementState, KeyEvent};
 #[cfg(target_os = "macos")]
 use crate::platform::keyboard::ModifiersKeyState;
+use crate::platform::keyboard::{Key, KeyLocation, ModifiersState, NamedKey};
 #[cfg(target_os = "macos")]
 use crate::platform::window::OptionAsAlt;
-use crate::platform::keyboard::{Key, KeyLocation, ModifiersState, NamedKey};
 
 use crate::terminal::event::EventListener;
 use crate::terminal::term::TermMode;

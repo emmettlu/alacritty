@@ -1,8 +1,6 @@
 use serde::de::Error as SerdeError;
 use serde::{Deserialize, Deserializer, Serialize};
 
-
-
 /// Maximum scrollback amount configurable.
 pub const MAX_SCROLLBACK_LINES: u32 = 100_000;
 
@@ -17,7 +15,10 @@ pub struct Scrolling {
 
 impl Default for Scrolling {
     fn default() -> Self {
-        Self { multiplier: 3, history: Default::default() }
+        Self {
+            multiplier: 3,
+            history: Default::default(),
+        }
     }
 }
 

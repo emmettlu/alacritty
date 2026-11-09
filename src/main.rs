@@ -12,15 +12,15 @@ use crate::platform::event_loop::EventLoop;
 
 use crate::terminal::tty;
 
-mod platform;
 mod cli;
 mod clipboard;
 mod config;
+mod platform;
 
 mod daemon;
 mod display;
-mod font;
 mod event;
+mod font;
 mod input;
 
 #[cfg(unix)]

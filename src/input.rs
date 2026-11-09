@@ -14,7 +14,6 @@ use std::marker::PhantomData;
 use std::mem;
 use std::time::{Duration, Instant};
 
-use log::debug;
 use crate::platform::dpi::PhysicalPosition;
 use crate::platform::event::{
     ElementState, Modifiers, MouseButton, MouseScrollDelta, Touch as TouchEvent, TouchPhase,
@@ -23,6 +22,7 @@ use crate::platform::event::{
 use crate::platform::event_loop::ActiveEventLoop;
 use crate::platform::keyboard::ModifiersState;
 use crate::platform::window::CursorIcon;
+use log::debug;
 
 use crate::terminal::event::EventListener;
 use crate::terminal::grid::{Dimensions, Scroll};

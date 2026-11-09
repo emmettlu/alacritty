@@ -10,9 +10,9 @@ use std::path::PathBuf;
 use std::process;
 use std::sync::OnceLock;
 
+use crate::platform::event_loop::EventLoopProxy;
 use log::LevelFilter;
 use nanologger::{LogLevel, LogOutput, LoggerBuilder};
-use crate::platform::event_loop::EventLoopProxy;
 
 use crate::cli::Options;
 use crate::event::{Event, EventType};

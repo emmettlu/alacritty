@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-
 use crate::terminal::term::SEMANTIC_ESCAPE_CHARS;
 
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]

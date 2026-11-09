@@ -6,11 +6,11 @@ use std::mem;
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use crate::platform::keyboard::{Key, ModifiersState};
 use log::{error, warn};
 use serde::de::{Error as SerdeError, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use unicode_width::UnicodeWidthChar;
-use crate::platform::keyboard::{Key, ModifiersState};
 
 use crate::terminal::term::Config as TermConfig;
 use crate::terminal::term::search::RegexSearch;

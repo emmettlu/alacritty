@@ -10,14 +10,14 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::platform::event::{Event as NativeEvent, Modifiers, WindowEvent};
+use crate::platform::event_loop::{ActiveEventLoop, EventLoopProxy};
+use crate::platform::window::WindowId;
 #[cfg(feature = "ref-tests")]
 use log::error;
 use log::info;
 #[cfg(feature = "ref-tests")]
 use serde_json as json;
-use crate::platform::event::{Event as NativeEvent, Modifiers, WindowEvent};
-use crate::platform::event_loop::{ActiveEventLoop, EventLoopProxy};
-use crate::platform::window::WindowId;
 
 use crate::terminal::event::Event as TerminalEvent;
 use crate::terminal::event_loop::{EventLoop as PtyEventLoop, Msg, Notifier};

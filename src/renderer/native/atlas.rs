@@ -84,7 +84,13 @@ enum AtlasInsertError {
 }
 
 impl GlyphAtlas {
-    pub(super) fn new() -> Self { Self { pages: vec![Atlas::new(ATLAS_SIZE)], active_page: 0, rgba_scratch: Vec::new() } }
+    pub(super) fn new() -> Self {
+        Self {
+            pages: vec![Atlas::new(ATLAS_SIZE)],
+            active_page: 0,
+            rgba_scratch: Vec::new(),
+        }
+    }
     /// 加载字形到 active atlas 页面, 并在页面满时同步创建下一页及其 bind group.
     pub(super) fn load_glyph(&mut self, rasterized: &RasterizedGlyph) -> Glyph {
         loop {
@@ -119,13 +125,22 @@ impl GlyphAtlas {
         self.pages[0].clear();
         self.active_page = 0;
     }
-
 }
 impl Atlas {
-    fn new(size: u32) -> Self { Self { pixels: vec![0;(size*size*4) as usize], dirty: Some(0..size), width:size, height:size, row_extent:0, row_baseline:0, row_tallest:0 } }
+    fn new(size: u32) -> Self {
+        Self {
+            pixels: vec![0; (size * size * 4) as usize],
+            dirty: Some(0..size),
+            width: size,
+            height: size,
+            row_extent: 0,
+            row_baseline: 0,
+            row_tallest: 0,
+        }
+    }
     fn clear(&mut self) {
         self.pixels.fill(0);
-        self.dirty=Some(0..self.height);
+        self.dirty = Some(0..self.height);
         self.row_extent = 0;
         self.row_baseline = 0;
         self.row_tallest = 0;
@@ -160,11 +175,7 @@ impl Atlas {
     }
 
     /// 不检查空间, 直接插入字形.
-    fn insert_inner(
-        &mut self,
-        glyph: &RasterizedGlyph,
-        rgba_scratch: &mut Vec<u8>,
-    ) -> Glyph {
+    fn insert_inner(&mut self, glyph: &RasterizedGlyph, rgba_scratch: &mut Vec<u8>) -> Glyph {
         let offset_y = self.row_baseline;
         let offset_x = self.row_extent;
         let height = glyph.height as u32;
@@ -188,12 +199,17 @@ impl Atlas {
 
         if width > 0 && height > 0 && !rgba_buffer.is_empty() {
             for row in 0..height as usize {
-                let dst=(((offset_y as usize+row)*self.width as usize)+offset_x as usize)*4;
-                let src=row*width as usize*4;
-                self.pixels[dst..dst+width as usize*4].copy_from_slice(&rgba_buffer[src..src+width as usize*4]);
+                let dst =
+                    (((offset_y as usize + row) * self.width as usize) + offset_x as usize) * 4;
+                let src = row * width as usize * 4;
+                self.pixels[dst..dst + width as usize * 4]
+                    .copy_from_slice(&rgba_buffer[src..src + width as usize * 4]);
             }
-            let rows=offset_y..offset_y+height;
-            self.dirty=Some(match self.dirty.take() { Some(old)=>old.start.min(rows.start)..old.end.max(rows.end),None=>rows });
+            let rows = offset_y..offset_y + height;
+            self.dirty = Some(match self.dirty.take() {
+                Some(old) => old.start.min(rows.start)..old.end.max(rows.end),
+                None => rows,
+            });
         }
 
         // 更新 Atlas 状态.
@@ -250,7 +266,7 @@ impl Atlas {
 
         self.row_baseline = advance_to;
         self.pixels.fill(0);
-        self.dirty=Some(0..self.height);
+        self.dirty = Some(0..self.height);
         self.row_extent = 0;
         self.row_tallest = 0;
 

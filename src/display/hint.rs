@@ -3,8 +3,8 @@ use std::cmp::Reverse;
 use std::iter;
 use std::rc::Rc;
 
-use rustc_hash::FxHashSet;
 use crate::platform::keyboard::ModifiersState;
+use rustc_hash::FxHashSet;
 
 use crate::terminal::grid::{BidirectionalIterator, Dimensions};
 use crate::terminal::index::{Boundary, Column, Direction, Line, Point};

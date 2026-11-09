@@ -14,6 +14,8 @@ use windows_sys::Win32::System::{
 };
 
 #[cfg(all(unix, not(target_os = "macos")))]
+use crate::platform::native::wayland_display;
+#[cfg(all(unix, not(target_os = "macos")))]
 use smithay_clipboard::Clipboard as WaylandClipboard;
 #[cfg(all(unix, not(target_os = "macos")))]
 use std::collections::HashMap;
@@ -27,8 +29,6 @@ use std::sync::{Arc, RwLock};
 use std::thread;
 #[cfg(all(unix, not(target_os = "macos")))]
 use std::time::{Duration, Instant};
-#[cfg(all(unix, not(target_os = "macos")))]
-use crate::platform::native::wayland_display;
 
 #[cfg(all(unix, not(target_os = "macos")))]
 use x11rb::connection::{Connection, RequestConnection};
@@ -577,8 +577,12 @@ impl Clipboard {
     #[cfg(all(unix, not(target_os = "macos")))]
     pub fn new<T: 'static>(event_loop: &crate::platform::event_loop::EventLoop<T>) -> Self {
         let _ = event_loop;
-        if let Some(p)=wayland_display() {
-            return Self { wayland:Some(unsafe { WaylandClipboard::new(p) }), wayland_display:Some(p),x11:None };
+        if let Some(p) = wayland_display() {
+            return Self {
+                wayland: Some(unsafe { WaylandClipboard::new(p) }),
+                wayland_display: Some(p),
+                x11: None,
+            };
         }
         if let Ok(st) = X11State::new() {
             return Self {
@@ -598,8 +602,12 @@ impl Clipboard {
         #[cfg(target_os = "macos")]
         if ty != ClipboardType::Selection {
             cidre::objc::ar_pool(|| {
-                let mut clipboard=cidre::ns::Pasteboard::general(); clipboard.clear_contents();
-                clipboard.set_string_for_type(&cidre::ns::String::with_str(&text.into()),cidre::ns::pasteboard_types::string());
+                let mut clipboard = cidre::ns::Pasteboard::general();
+                clipboard.clear_contents();
+                clipboard.set_string_for_type(
+                    &cidre::ns::String::with_str(&text.into()),
+                    cidre::ns::pasteboard_types::string(),
+                );
             });
         }
 
@@ -693,8 +701,14 @@ impl Clipboard {
         }
         #[cfg(not(any(windows, all(unix, not(target_os = "macos")))))]
         {
-            if ty==ClipboardType::Selection { return String::new(); }
-            cidre::objc::ar_pool(|| cidre::ns::Pasteboard::general().string_for_type(cidre::ns::pasteboard_types::string()).map_or_else(String::new,|text|text.to_string()))
+            if ty == ClipboardType::Selection {
+                return String::new();
+            }
+            cidre::objc::ar_pool(|| {
+                cidre::ns::Pasteboard::general()
+                    .string_for_type(cidre::ns::pasteboard_types::string())
+                    .map_or_else(String::new, |text| text.to_string())
+            })
         }
     }
 }

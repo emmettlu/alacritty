@@ -25,16 +25,44 @@ fn compile_shaders() {
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
     for (file, entries) in [
-        ("wgsl/text.wgsl", &[("vs_bg", naga::ShaderStage::Vertex), ("vs_text", naga::ShaderStage::Vertex), ("fs_bg", naga::ShaderStage::Fragment), ("fs_text", naga::ShaderStage::Fragment)][..]),
-        ("wgsl/rect.wgsl", &[("vs_main", naga::ShaderStage::Vertex), ("fs_main", naga::ShaderStage::Fragment)][..]),
+        (
+            "wgsl/text.wgsl",
+            &[
+                ("vs_bg", naga::ShaderStage::Vertex),
+                ("vs_text", naga::ShaderStage::Vertex),
+                ("fs_bg", naga::ShaderStage::Fragment),
+                ("fs_text", naga::ShaderStage::Fragment),
+            ][..],
+        ),
+        (
+            "wgsl/rect.wgsl",
+            &[
+                ("vs_main", naga::ShaderStage::Vertex),
+                ("fs_main", naga::ShaderStage::Fragment),
+            ][..],
+        ),
     ] {
         println!("cargo:rerun-if-changed={file}");
         let source = fs::read_to_string(file).expect("read Vulkan shader source");
         let module = naga::front::wgsl::parse_str(&source).expect("parse Vulkan shader");
-        let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&module).expect("validate Vulkan shader");
+        let info = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .expect("validate Vulkan shader");
         for (entry, stage) in entries {
-            let pipeline = naga::back::spv::PipelineOptions { shader_stage: *stage, entry_point: (*entry).into() };
-            let words = naga::back::spv::write_vec(&module, &info, &naga::back::spv::Options::default(), Some(&pipeline)).expect("compile Vulkan shader");
+            let pipeline = naga::back::spv::PipelineOptions {
+                shader_stage: *stage,
+                entry_point: (*entry).into(),
+            };
+            let words = naga::back::spv::write_vec(
+                &module,
+                &info,
+                &naga::back::spv::Options::default(),
+                Some(&pipeline),
+            )
+            .expect("compile Vulkan shader");
             let bytes: Vec<_> = words.into_iter().flat_map(u32::to_le_bytes).collect();
             fs::write(out_dir.join(format!("{entry}.spv")), bytes).expect("write Vulkan shader");
         }

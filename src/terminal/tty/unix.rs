@@ -54,18 +54,45 @@ struct Passwd {
 #[cfg(target_os = "macos")]
 fn get_pw_entry() -> Result<Passwd> {
     use std::{ffi::CStr, mem::MaybeUninit, ptr};
-    let mut buffer=vec![0u8;4096];
+    let mut buffer = vec![0u8; 4096];
     loop {
-        let mut entry=MaybeUninit::<libc::passwd>::uninit();
-        let mut result=ptr::null_mut();
+        let mut entry = MaybeUninit::<libc::passwd>::uninit();
+        let mut result = ptr::null_mut();
         // Returned string pointers refer to buffer and are copied before it is dropped.
-        let status=unsafe { libc::getpwuid_r(libc::getuid(),entry.as_mut_ptr(),buffer.as_mut_ptr().cast(),buffer.len(),&mut result) };
-        if status==libc::ERANGE { buffer.resize(buffer.len()*2,0); continue; }
-        if status!=0 { return Err(Error::from_raw_os_error(status)); }
-        if result.is_null() { return Err(Error::other("user account not found")); }
-        let entry=unsafe { entry.assume_init() };
-        let string=|value:*const libc::c_char| if value.is_null() { String::new() } else { unsafe { CStr::from_ptr(value) }.to_string_lossy().into_owned() };
-        return Ok(Passwd { name:string(entry.pw_name),dir:string(entry.pw_dir),shell:string(entry.pw_shell) });
+        let status = unsafe {
+            libc::getpwuid_r(
+                libc::getuid(),
+                entry.as_mut_ptr(),
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+                &mut result,
+            )
+        };
+        if status == libc::ERANGE {
+            buffer.resize(buffer.len() * 2, 0);
+            continue;
+        }
+        if status != 0 {
+            return Err(Error::from_raw_os_error(status));
+        }
+        if result.is_null() {
+            return Err(Error::other("user account not found"));
+        }
+        let entry = unsafe { entry.assume_init() };
+        let string = |value: *const libc::c_char| {
+            if value.is_null() {
+                String::new()
+            } else {
+                unsafe { CStr::from_ptr(value) }
+                    .to_string_lossy()
+                    .into_owned()
+            }
+        };
+        return Ok(Passwd {
+            name: string(entry.pw_name),
+            dir: string(entry.pw_dir),
+            shell: string(entry.pw_shell),
+        });
     }
 }
 
@@ -213,7 +240,7 @@ pub fn from_fd(config: &Options, window_id: u64, master: OwnedFd, slave: OwnedFd
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     if let Ok(tios) = tcgetattr(&master) {
         #[cfg(target_os = "linux")]
-        let mut tios=tios;
+        let mut tios = tios;
         #[cfg(target_os = "linux")]
         {
             // Set character encoding to UTF-8

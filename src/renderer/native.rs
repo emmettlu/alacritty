@@ -1,22 +1,22 @@
 //! Shared glyph batching for the native GPU backends.
-use std::ops::Range;
-use std::rc::Rc;
-use std::sync::LazyLock;
-use crate::font::Metrics;
-use unicode_width::UnicodeWidthChar;
-use crate::terminal::index::Point;
-use crate::terminal::term::cell::Flags;
+use super::Error;
+use super::rects::{RectKind, RenderRect};
 use crate::display::SizeInfo;
 use crate::display::color::{Rgb, srgb_byte_to_linear};
 use crate::display::content::RenderableCell;
+use crate::font::Metrics;
 use crate::platform::window::Window;
-use super::Error;
-use super::rects::{RectKind, RenderRect};
+use crate::terminal::index::Point;
+use crate::terminal::term::cell::Flags;
+use std::ops::Range;
+use std::rc::Rc;
+use std::sync::LazyLock;
+use unicode_width::UnicodeWidthChar;
 mod atlas;
 mod builtin_font;
 mod glyph_cache;
-pub(crate) use glyph_cache::GlyphCache;
 use atlas::{Glyph, GlyphAtlas};
+pub(crate) use glyph_cache::GlyphCache;
 #[cfg(target_os = "macos")]
 mod metal;
 #[cfg(target_os = "macos")]
@@ -64,7 +64,10 @@ impl TextLayer {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum FrameUnavailable { Retry, Suspended }
+pub(crate) enum FrameUnavailable {
+    Retry,
+    Suspended,
+}
 pub(crate) struct NativeFrame;
 #[derive(Default)]
 struct TextBatch {
@@ -117,7 +120,6 @@ struct RectInstanceData {
 const _: () = assert!(std::mem::size_of::<FrameUniforms>() == 48);
 const _: () = assert!(std::mem::size_of::<RectInstanceData>() == 36);
 
-
 /// Rendering glyph flags - 与着色器保持同步
 const COLORED_FLAG: u32 = 1;
 const WIDE_CHAR_FLAG: u32 = 2;
@@ -144,7 +146,6 @@ fn srgb_to_linear_f32(srgb: u8) -> f32 {
     srgb_byte_to_linear(srgb)
 }
 
-
 pub(crate) struct NativeRenderer {
     gpu: Gpu,
     window: Rc<Window>,
@@ -160,43 +161,90 @@ pub(crate) struct NativeRenderer {
     clear: [f64; 4],
 }
 impl std::fmt::Debug for NativeRenderer {
-    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result { f.write_str("NativeRenderer") }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NativeRenderer")
+    }
 }
 impl NativeRenderer {
     pub(crate) fn new(window: Rc<Window>, opacity: f32) -> Result<Self, Error> {
-        let gpu=Gpu::new(window.clone(),opacity)?;
-        Ok(Self { gpu, window, opacity, text_batches: Default::default(), text_batch_counts: [0;2], text_instances: Vec::new(), text_draw_commands: Default::default(), rect_instances: Vec::new(), glyph_atlas: GlyphAtlas::new(), uniforms: bytemuck::Zeroable::zeroed(), viewport: [0.;4], clear: [0.;4] })
+        let gpu = Gpu::new(window.clone(), opacity)?;
+        Ok(Self {
+            gpu,
+            window,
+            opacity,
+            text_batches: Default::default(),
+            text_batch_counts: [0; 2],
+            text_instances: Vec::new(),
+            text_draw_commands: Default::default(),
+            rect_instances: Vec::new(),
+            glyph_atlas: GlyphAtlas::new(),
+            uniforms: bytemuck::Zeroable::zeroed(),
+            viewport: [0.; 4],
+            clear: [0.; 4],
+        })
     }
     pub(crate) fn begin_frame(&mut self) -> Result<NativeFrame, FrameUnavailable> {
-        self.text_batch_counts=[0;2];
-        let size=self.window.inner_size();
-        if size.width==0 || size.height==0 { Err(FrameUnavailable::Suspended) } else { Ok(NativeFrame) }
+        self.text_batch_counts = [0; 2];
+        let size = self.window.inner_size();
+        if size.width == 0 || size.height == 0 {
+            Err(FrameUnavailable::Suspended)
+        } else {
+            Ok(NativeFrame)
+        }
     }
-    pub(crate) fn render_frame(&mut self, _: &mut NativeFrame, size: &SizeInfo, metrics: &Metrics, rects: &[RenderRect], color: Rgb, alpha: f32) {
+    pub(crate) fn render_frame(
+        &mut self,
+        _: &mut NativeFrame,
+        size: &SizeInfo,
+        metrics: &Metrics,
+        rects: &[RenderRect],
+        color: Rgb,
+        alpha: f32,
+    ) {
         self.flatten_text_batches();
         self.prepare_rects(rects);
-        let (x,y,w,h)=Self::content_viewport(size);
-        self.viewport=[x as f64,y as f64,w as f64,h as f64];
-        self.uniforms=FrameUniforms {
-            projection: [-1.,1.,2./w,-2./h], cell_dim: [size.cell_width(),size.cell_height()],
-            padding: [x,y], underline_position: metrics.descent.abs()-metrics.underline_position.abs(),
-            underline_thickness: metrics.underline_thickness, undercurl_position: (0.5*metrics.descent).abs(), _pad: 0.,
+        let (x, y, w, h) = Self::content_viewport(size);
+        self.viewport = [x as f64, y as f64, w as f64, h as f64];
+        self.uniforms = FrameUniforms {
+            projection: [-1., 1., 2. / w, -2. / h],
+            cell_dim: [size.cell_width(), size.cell_height()],
+            padding: [x, y],
+            underline_position: metrics.descent.abs() - metrics.underline_position.abs(),
+            underline_thickness: metrics.underline_thickness,
+            undercurl_position: (0.5 * metrics.descent).abs(),
+            _pad: 0.,
         };
-        self.clear=Self::clear_color(color,alpha);
-        self.opacity=alpha;
+        self.clear = Self::clear_color(color, alpha);
+        self.opacity = alpha;
     }
     pub(crate) fn submit_frame(&mut self, _: NativeFrame) {
-        if let Err(err)=self.gpu.render(&self.window,&self.uniforms,self.viewport,&self.text_instances,&self.text_draw_commands,&self.rect_instances,&mut self.glyph_atlas,self.clear) {
+        if let Err(err) = self.gpu.render(
+            &self.window,
+            &self.uniforms,
+            self.viewport,
+            &self.text_instances,
+            &self.text_draw_commands,
+            &self.rect_instances,
+            &mut self.glyph_atlas,
+            self.clear,
+        ) {
             log::warn!("Native frame unavailable: {err}");
             self.window.request_redraw();
         }
     }
-    pub(crate) fn present_clear(&mut self,color: Rgb,alpha:f32) {
-        let size=self.window.inner_size(); self.viewport=[0.,0.,size.width as f64,size.height as f64]; self.clear=Self::clear_color(color,alpha);
+    pub(crate) fn present_clear(&mut self, color: Rgb, alpha: f32) {
+        let size = self.window.inner_size();
+        self.viewport = [0., 0., size.width as f64, size.height as f64];
+        self.clear = Self::clear_color(color, alpha);
         self.submit_frame(NativeFrame);
     }
-    fn clear_color(color: Rgb, alpha: f32) -> [f64;4] {
-        [srgb_to_linear_f32(color.r) as f64*alpha as f64,srgb_to_linear_f32(color.g) as f64*alpha as f64,srgb_to_linear_f32(color.b) as f64*alpha as f64,alpha as f64]
+    fn clear_color(color: Rgb, alpha: f32) -> [f64; 4] {
+        [
+            srgb_to_linear_f32(color.r) as f64 * alpha as f64,
+            srgb_to_linear_f32(color.g) as f64 * alpha as f64,
+            srgb_to_linear_f32(color.b) as f64 * alpha as f64,
+            alpha as f64,
+        ]
     }
     fn content_viewport(size_info: &SizeInfo) -> (f32, f32, f32, f32) {
         let x = size_info.padding_x();
@@ -411,7 +459,6 @@ impl NativeRenderer {
                     .map(Self::create_rect_instance),
             );
         }
-
     }
     fn create_rect_instance(rect: &RenderRect) -> RectInstanceData {
         RectInstanceData {

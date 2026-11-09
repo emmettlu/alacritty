@@ -16,14 +16,16 @@ use std::time::{Duration, Instant};
 use std::{env, f32, mem};
 
 use crate::font::Size as FontSize;
-use log::{debug, error, info, warn};
-use rustc_hash::{FxHashMap, FxHashSet};
 use crate::platform::application::ApplicationHandler;
 use crate::platform::event::{
     ElementState, Event as NativeEvent, Ime, Modifiers, MouseButton, StartCause,
     Touch as TouchEvent, WindowEvent,
 };
-use crate::platform::event_loop::{ActiveEventLoop, ControlFlow, DeviceEvents, EventLoop, EventLoopProxy};
+use crate::platform::event_loop::{
+    ActiveEventLoop, ControlFlow, DeviceEvents, EventLoop, EventLoopProxy,
+};
+use log::{debug, error, info, warn};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::platform::window::WindowId;
 
