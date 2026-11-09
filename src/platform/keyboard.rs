@@ -212,7 +212,8 @@ pub enum NamedKey {
     ClosedCaptionToggle,
     Dimmer,
     DisplaySwap,
-    DVR,
+    #[serde(rename = "DVR")]
+    Dvr,
     Exit,
     FavoriteClear0,
     FavoriteClear1,

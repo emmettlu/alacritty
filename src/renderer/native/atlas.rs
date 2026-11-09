@@ -186,7 +186,7 @@ impl Atlas {
             BitmapBuffer::Rgb(buffer) => {
                 rgba_scratch.clear();
                 rgba_scratch.reserve(buffer.len() / 3 * 4);
-                for rgb in buffer.chunks_exact(3) {
+                for rgb in buffer.as_chunks::<3>().0 {
                     // Atlas 使用 sRGB 纹理以保证 emoji 颜色正确, 但普通字形的 coverage
                     // 不能放在 RGB 通道里, 否则采样时会被 sRGB -> linear 转换压暗,
                     // 导致文字看起来过细. alpha 通道不会做 sRGB 转换.

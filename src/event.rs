@@ -276,7 +276,7 @@ impl ApplicationHandler<Event> for Processor {
             &self.proxy,
             &mut self.clipboard,
             &mut self.scheduler,
-            NativeEvent::WindowEvent { window_id, event },
+            NativeEvent::Window { window_id, event },
         );
 
         if is_redraw {
@@ -332,7 +332,7 @@ impl ApplicationHandler<Event> for Processor {
             }
             // Process events affecting all windows.
             (payload, None) => {
-                let event = NativeEvent::UserEvent(Event::new(payload, None));
+                let event = NativeEvent::User(Event::new(payload, None));
                 for window_context in self.windows.values_mut() {
                     window_context.handle_event(
                         #[cfg(target_os = "macos")]
@@ -395,7 +395,7 @@ impl ApplicationHandler<Event> for Processor {
                         &self.proxy,
                         &mut self.clipboard,
                         &mut self.scheduler,
-                        NativeEvent::UserEvent(Event::new(payload, *window_id)),
+                        NativeEvent::User(Event::new(payload, *window_id)),
                     );
                 }
             }
@@ -436,13 +436,10 @@ impl ApplicationHandler<Event> for Processor {
                     SocketMessage::GetConfig(get) => {
                         if let Some(stream) = maybe_stream
                             && let Some(window_id) = Self::ipc_target_window_id(get.window_id)
-                        {
-                            if let Err(err) = self.proxy.send_event(Event::new(
-                                EventType::IpcGetConfig(std::sync::Arc::new(stream)),
-                                window_id,
+                            && let Err(err) = self.proxy.send_event(Event::new(
+                                EventType::IpcGetConfig(std::sync::Arc::new(stream)), window_id,
                             )) {
-                                debug!("Failed to send IPC get-config event: {err:?}");
-                            }
+                            debug!("Failed to send IPC get-config event: {err:?}");
                         }
                     }
                 }
@@ -489,7 +486,7 @@ impl Event {
 
 impl From<Event> for NativeEvent<Event> {
     fn from(event: Event) -> Self {
-        NativeEvent::UserEvent(event)
+        NativeEvent::User(event)
     }
 }
 
@@ -837,8 +834,7 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
 
     #[cfg(target_os = "macos")]
     fn create_new_window(&mut self, window_tabbing_id: Option<String>) {
-        let mut options = WindowOptions::default();
-        options.window_tabbing_id = window_tabbing_id;
+        let options = WindowOptions { window_tabbing_id, ..WindowOptions::default() };
 
         if let Err(err) = self
             .event_proxy
@@ -1823,7 +1819,7 @@ impl input::Processor<EventProxy, ActionContext<'_, Notifier, EventProxy>> {
     /// Handle events from native windowing.
     pub fn handle_event(&mut self, event: NativeEvent<Event>) {
         match event {
-            NativeEvent::UserEvent(Event { payload, .. }) => match payload {
+            NativeEvent::User(Event { payload, .. }) => match payload {
                 EventType::SearchNext => self.ctx.goto_match(None),
                 EventType::Scroll(scroll) => self.ctx.scroll(scroll),
                 EventType::BlinkCursor => {
@@ -1918,7 +1914,7 @@ impl input::Processor<EventProxy, ActionContext<'_, Notifier, EventProxy>> {
                 EventType::IpcGetConfig(..) => (),
                 EventType::Message(_) | EventType::CreateWindow(_) | EventType::Frame => (),
             },
-            NativeEvent::WindowEvent { event, .. } => {
+            NativeEvent::Window { event, .. } => {
                 match event {
                     WindowEvent::CloseRequested => {
                         // User asked to close the window, so no need to hold it.
@@ -2051,7 +2047,7 @@ impl input::Processor<EventProxy, ActionContext<'_, Notifier, EventProxy>> {
             }
             NativeEvent::Suspended
             | NativeEvent::NewEvents { .. }
-            | NativeEvent::DeviceEvent { .. }
+            | NativeEvent::Device { .. }
             | NativeEvent::LoopExiting
             | NativeEvent::Resumed
             | NativeEvent::MemoryWarning

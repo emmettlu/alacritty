@@ -74,6 +74,7 @@ pub struct RasterizedGlyph {
     pub height: i32,
     pub top: i32,
     pub left: i32,
+    #[allow(dead_code)]
     pub advance: (i32, i32),
     pub buffer: BitmapBuffer,
 }
@@ -105,7 +106,7 @@ pub enum Error {
     FontNotFound(FontDesc),
     MissingGlyph(RasterizedGlyph),
     UnknownFontKey,
-    PlatformError(String),
+    Platform(String),
 }
 impl std::error::Error for Error {}
 impl fmt::Display for Error {
@@ -114,7 +115,7 @@ impl fmt::Display for Error {
             Self::FontNotFound(desc) => write!(f, "Font not found: {desc}"),
             Self::MissingGlyph(glyph) => write!(f, "Missing glyph: {}", glyph.character),
             Self::UnknownFontKey => f.write_str("Unknown font key"),
-            Self::PlatformError(error) => f.write_str(error),
+            Self::Platform(error) => f.write_str(error),
         }
     }
 }
@@ -265,7 +266,7 @@ impl Rasterize for Rasterizer {
         let height = height as usize;
         let mut pixels = vec![0u8; width * height * 4];
         let space = cg::ColorSpace::device_rgb()
-            .ok_or_else(|| Error::PlatformError("Cannot create font color space".into()))?;
+            .ok_or_else(|| Error::Platform("Cannot create font color space".into()))?;
         let mut context = cg::Context::new_bitmap(
             pixels.as_mut_ptr().cast(),
             width,
@@ -276,7 +277,7 @@ impl Rasterize for Rasterizer {
             cg::BitmapInfo::with_alpha(cg::ImageAlphaInfo::PremultipliedLast)
                 | cg::BitmapInfo::BYTE_ORDER_32_BIG,
         )
-        .ok_or_else(|| Error::PlatformError("Cannot create glyph bitmap context".into()))?;
+        .ok_or_else(|| Error::Platform("Cannot create glyph bitmap context".into()))?;
         context.set_rgb_fill_color(1., 1., 1., 1.);
         context.set_text_pos(0., 0.);
         unsafe {
@@ -292,7 +293,7 @@ impl Rasterize for Rasterizer {
         let colored = font.symbolic_traits().0 & (1 << 13) != 0;
         let buffer = if colored {
             // The render pipeline expects straight alpha; CoreGraphics produces premultiplied sRGB.
-            for pixel in pixels.chunks_exact_mut(4) {
+            for pixel in pixels.as_chunks_mut::<4>().0 {
                 if pixel[3] != 0 {
                     let alpha = pixel[3] as u32;
                     for channel in &mut pixel[..3] {
@@ -303,7 +304,7 @@ impl Rasterize for Rasterizer {
             BitmapBuffer::Rgba(pixels)
         } else {
             let mut mask = Vec::with_capacity(width * height * 3);
-            for pixel in pixels.chunks_exact(4) {
+            for pixel in pixels.as_chunks::<4>().0 {
                 mask.extend_from_slice(&[pixel[3]; 3]);
             }
             BitmapBuffer::Rgb(mask)
@@ -363,7 +364,7 @@ mod tests {
                     match glyph.buffer {
                         BitmapBuffer::Rgb(pixels) => assert!(pixels.iter().any(|v| *v > 0)),
                         BitmapBuffer::Rgba(pixels) => {
-                            assert!(pixels.chunks_exact(4).any(|v| v[3] > 0))
+                            assert!(pixels.as_chunks::<4>().0.iter().any(|v| v[3] > 0))
                         }
                     }
                 }

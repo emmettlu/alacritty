@@ -180,8 +180,8 @@ pub enum WindowEvent {
 }
 #[derive(Debug, Clone)]
 pub enum Event<T> {
-    UserEvent(T),
-    WindowEvent {
+    User(T),
+    Window {
         window_id: WindowId,
         event: WindowEvent,
     },
@@ -191,7 +191,7 @@ pub enum Event<T> {
     NewEvents {
         cause: StartCause,
     },
-    DeviceEvent {},
+    Device {},
     LoopExiting,
     MemoryWarning,
 }

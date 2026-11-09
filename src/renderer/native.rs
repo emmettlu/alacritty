@@ -65,7 +65,6 @@ impl TextLayer {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FrameUnavailable {
-    Retry,
     Suspended,
 }
 pub(crate) struct NativeFrame;

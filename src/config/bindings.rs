@@ -720,11 +720,11 @@ impl<'a> Deserialize<'a> for BindingKey {
                 let keycode = String::deserialize(value.clone()).map_err(D::Error::custom)?;
                 let (key, location) = if keycode.chars().count() == 1 {
                     (
-                        Key::Character(keycode.to_lowercase().into()),
+                        Key::Character(keycode.to_lowercase()),
                         KeyLocation::Any,
                     )
                 } else {
-                    // Translate legacy winit codes into their modern counterparts.
+                    // Translate legacy key names into their modern counterparts.
                     match keycode.as_str() {
                         "Back" => (Key::Named(NamedKey::Backspace), KeyLocation::Any),
                         "Up" => (Key::Named(NamedKey::ArrowUp), KeyLocation::Any),
@@ -1251,7 +1251,7 @@ impl<'de> Deserialize<'de> for SerdeViMotion {
     }
 }
 
-/// Newtype for implementing deserialize on winit Mods.
+/// Newtype for implementing deserialize on modifier flags.
 ///
 /// Our deserialize impl wouldn't be covered by a derive(Deserialize); see the
 /// impl below.

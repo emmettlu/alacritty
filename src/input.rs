@@ -1397,7 +1397,7 @@ mod tests {
                 let mut processor = Processor::new(context);
 
                 let event: NativeEvent::<TerminalEvent> = $input;
-                if let NativeEvent::WindowEvent {
+                if let NativeEvent::Window {
                     event: WindowEvent::MouseInput {
                         state,
                         button,
@@ -1437,7 +1437,7 @@ mod tests {
         name: single_click,
         initial_state: ClickState::None,
         initial_button: MouseButton::Other(0),
-        input: NativeEvent::WindowEvent {
+        input: NativeEvent::Window {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
@@ -1453,7 +1453,7 @@ mod tests {
         name: single_right_click,
         initial_state: ClickState::None,
         initial_button: MouseButton::Other(0),
-        input: NativeEvent::WindowEvent {
+        input: NativeEvent::Window {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Right,
@@ -1469,7 +1469,7 @@ mod tests {
         name: single_middle_click,
         initial_state: ClickState::None,
         initial_button: MouseButton::Other(0),
-        input: NativeEvent::WindowEvent {
+        input: NativeEvent::Window {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Middle,
@@ -1485,7 +1485,7 @@ mod tests {
         name: double_click,
         initial_state: ClickState::Click,
         initial_button: MouseButton::Left,
-        input: NativeEvent::WindowEvent {
+        input: NativeEvent::Window {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
@@ -1501,7 +1501,7 @@ mod tests {
         name: double_click_failed,
         initial_state: ClickState::Click,
         initial_button: MouseButton::Left,
-        input: NativeEvent::WindowEvent {
+        input: NativeEvent::Window {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
@@ -1517,7 +1517,7 @@ mod tests {
         name: triple_click,
         initial_state: ClickState::DoubleClick,
         initial_button: MouseButton::Left,
-        input: NativeEvent::WindowEvent {
+        input: NativeEvent::Window {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
@@ -1533,7 +1533,7 @@ mod tests {
         name: triple_click_failed,
         initial_state: ClickState::DoubleClick,
         initial_button: MouseButton::Left,
-        input: NativeEvent::WindowEvent {
+        input: NativeEvent::Window {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
@@ -1549,7 +1549,7 @@ mod tests {
         name: multi_click_separate_buttons,
         initial_state: ClickState::DoubleClick,
         initial_button: MouseButton::Left,
-        input: NativeEvent::WindowEvent {
+        input: NativeEvent::Window {
             event: WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Right,

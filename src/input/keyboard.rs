@@ -195,13 +195,13 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
             // On Windows, the `Ctrl + Alt` mangles `logical_key` to unidentified values, thus
             // preventing them from being used in bindings
             //
-            // For more see https://github.com/rust-windowing/winit/issues/2945.
+            // Native keyboard layouts can produce different symbols under modifiers.
             if (cfg!(target_os = "macos") || (cfg!(windows) && mods.control_key()))
                 && mods.alt_key()
             {
                 key.key_without_modifiers()
             } else {
-                Key::Character(ch.to_lowercase().into())
+                Key::Character(ch.to_lowercase())
             }
         } else {
             key.logical_key.clone()
@@ -424,7 +424,7 @@ impl SequenceBuilder {
                 unicode_key_code = u32::from(unmodded.chars().next().unwrap_or(unshifted_ch));
             }
 
-            // NOTE: Base layouts are ignored, since winit doesn't expose this information
+            // NOTE: Base layouts are ignored, since the platform event does not expose this information
             // yet.
             let payload = if self.mode.contains(TermMode::REPORT_ALTERNATE_KEYS)
                 && alternate_key_code != unicode_key_code
@@ -649,7 +649,7 @@ impl SequenceBuilder {
         };
 
         // NOTE: Kitty's protocol mandates that the modifier state is applied before
-        // key press, however winit sends them after the key press, so for modifiers
+        // key press, however the native backend delivers them after the key press, so for modifiers
         // itself apply the state based on keysyms and not the _actual_ modifiers
         // state, which is how kitty is doing so and what is suggested in such case.
         let press = key.state.is_pressed();
@@ -711,7 +711,7 @@ bitflags::bitflags! {
         const CONTROL = 0b0000_0100;
         const SUPER   = 0b0000_1000;
         // NOTE: Kitty protocol defines additional modifiers to what is present here, like
-        // Capslock, but it's not a modifier as per winit.
+        // Capslock, but it's not a modifier in the terminal modifier protocol.
     }
 }
 

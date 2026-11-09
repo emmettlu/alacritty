@@ -237,7 +237,7 @@ impl WindowContext {
     ) {
         match event {
             NativeEvent::AboutToWait
-            | NativeEvent::WindowEvent {
+            | NativeEvent::Window {
                 event: WindowEvent::RedrawRequested,
                 ..
             } => {
@@ -317,7 +317,7 @@ impl WindowContext {
             && !self.occluded
             && !matches!(
                 event,
-                NativeEvent::WindowEvent {
+                NativeEvent::Window {
                     event: WindowEvent::RedrawRequested,
                     ..
                 }

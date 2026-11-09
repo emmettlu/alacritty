@@ -626,12 +626,6 @@ impl Display {
 
         let mut frame = match self.renderer.begin_frame() {
             Ok(frame) => frame,
-            Err(FrameUnavailable::Retry) => {
-                grid_cells.clear();
-                self.renderable_cells = grid_cells;
-                self.request_frame(scheduler);
-                return false;
-            }
             Err(FrameUnavailable::Suspended) => {
                 grid_cells.clear();
                 self.renderable_cells = grid_cells;

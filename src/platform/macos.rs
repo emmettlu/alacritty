@@ -164,9 +164,23 @@ trait ScreenApi: objc::Obj {
     fn fps(&self) -> isize;
 }
 impl ScreenApi for ns::Screen {}
+define_obj_type!(TrackingArea(ns::Id));
+impl TrackingArea {
+    fn cls()->&'static objc::Class<Self> { unsafe { &*(objc::objc_getClass(c"NSTrackingArea".as_ptr().cast()).unwrap() as *const _ as *const _) } }
+}
+trait TrackingInit:Sized {
+    #[objc::msg_send(initWithRect:options:owner:userInfo:)]
+    fn init(self,rect:cg::Rect,options:usize,owner:&ns::Id,info:Option<&ns::Id>)->arc::R<TrackingArea>;
+}
+impl TrackingInit for arc::A<TrackingArea> {}
+trait DragApi:objc::Obj { #[objc::msg_send(draggingPasteboard)] fn pasteboard(&self)->arc::R<ns::Pasteboard>; }
+impl DragApi for ns::Id {}
 trait ViewApi: objc::Obj {
     #[objc::msg_send(interpretKeyEvents:)]
     fn interpret_keys(&mut self, events: &ns::Array<ns::Event>);
+    #[objc::msg_send(addTrackingArea:)] fn add_tracking_area(&mut self,area:&TrackingArea);
+    #[objc::msg_send(registerForDraggedTypes:)] fn register_drag_types(&mut self,types:&ns::Array<ns::String>);
+
 }
 impl ViewApi for TerminalView {}
 define_obj_type!(Cursor(ns::Id));
@@ -194,6 +208,7 @@ trait LayerApi: objc::Obj {
 impl LayerApi for ca::MetalLayer {}
 
 define_obj_type!(EventFactory(ns::Event));
+#[allow(clippy::too_many_arguments)]
 impl EventFactory {
     fn cls_ptr() -> *const std::ffi::c_void {
         ns::Event::cls_ptr()
@@ -395,12 +410,10 @@ impl TerminalView {
     fn insert_text(&mut self, value: &ns::Id, _replacement: ns::Range) {
         let text = text_value(value);
         let state = self.inner_mut();
-        if state.marked.is_empty() {
-            if let Some(mut key) = state.key.take() {
-                key.text = Some(text);
-                emit_key(state.id, key);
-                return;
-            }
+        if state.marked.is_empty() && let Some(mut key) = state.key.take() {
+            key.text = Some(text);
+            emit_key(state.id, key);
+            return;
         }
         state.key = None;
         state.marked.clear();
@@ -479,6 +492,22 @@ impl TerminalView {
         if let Some(key) = self.inner_mut().key.take() {
             emit_key(self.inner().id, key);
         }
+    }
+    #[objc::overrides(mouseEntered:)] fn mouse_entered(&self,event:&ns::Event) { self.motion(event); }
+    #[objc::overrides(mouseExited:)] fn mouse_exited(&self,_event:&ns::Event) { emit(self.inner().id,WindowEvent::CursorLeft { device_id:DeviceId }); }
+    #[objc::overrides(draggingEntered:)] fn dragging_entered(&self,_sender:&ns::Id)->usize { 1 }
+    #[objc::overrides(prepareForDragOperation:)] fn prepare_drag(&self,_sender:&ns::Id)->bool { true }
+    #[objc::overrides(performDragOperation:)] fn perform_drag(&self,sender:&ns::Id)->bool {
+        let pasteboard=sender.pasteboard(); let mut accepted=false;
+        if let Some(value)=pasteboard.property_list_for_type(ns::str!(c"NSFilenamesPboardType")) {
+            if let Some(paths)=value.try_cast(ns::Array::<ns::String>::cls()) {
+                for path in paths.iter() { emit(self.inner().id,WindowEvent::DroppedFile(path.to_string().into())); accepted=true; }
+            }
+        }
+        if !accepted && let Some(value)=pasteboard.string_for_type(ns::pasteboard_types::file_url()) && let Some(url)=ns::Url::with_string(&value) && let Some(path)=url.path() {
+            emit(self.inner().id,WindowEvent::DroppedFile(path.to_string().into())); accepted=true;
+        }
+        accepted
     }
     #[objc::overrides(mouseDown:)]
     fn mouse_down(&self, event: &ns::Event) {
@@ -763,6 +792,7 @@ impl WindowState {
         }
         let focus = window.is_key_window();
         if self.focused.replace(focus) != focus {
+            emit(self.id,WindowEvent::ModifiersChanged(if focus { modifiers(ns::Event::get_modifier_flags().0) } else { Modifiers::default() }));
             emit(self.id, WindowEvent::Focused(focus));
         }
         let occluded = window.occlusion_state().0 & 2 == 0;
@@ -829,6 +859,13 @@ impl Window {
             let id = WindowId(window.window_number() as u64);
             let delegate = unsafe { WindowDelegate::alloc_with(id).init_unchecked() };
             window.set_delegate(Some(delegate.as_ref()));
+            // AppKit creates an input context only for NSTextInputClient conforming views.
+            unsafe {
+                if let Some(protocol)=objc::objc_getProtocol(c"NSTextInputClient".as_ptr()) {
+                    let class=&*(TerminalView::cls() as *const _ as *const objc::Class<TerminalView>);
+                    class.add_protocol(protocol);
+                }
+            }
             let mut view = TerminalView::alloc_with(ViewState {
                 id,
                 marked: String::new(),
@@ -842,6 +879,9 @@ impl Window {
             let mut layer = ca::MetalLayer::new();
             layer.set_opaque(!attrs.transparent);
             layer.set_maximum_drawable_count(3);
+            let tracking=TrackingArea::cls().alloc().init(cg::Rect::new(0.,0.,0.,0.),1|2|32|512|1024,&view,None);
+            view.add_tracking_area(&tracking);
+            view.register_drag_types(&ns::Array::from_slice(&[ns::str!(c"NSFilenamesPboardType"),ns::pasteboard_types::file_url()]));
             view.set_wants_layer(true);
             view.set_layer(Some(&layer));
             view.set_autoresizing_mask(ns::AutoresizingMaskOpts(2 | 16));
@@ -1060,10 +1100,8 @@ impl Window {
             .map_or(1, |windows| windows.len())
     }
     pub fn select_tab_at_index(&self, index: usize) {
-        if let Some(windows) = self.state.window.borrow().tabbed_windows() {
-            if index < windows.len() {
-                windows.get(index).unwrap().make_key_window();
-            }
+        if let Some(windows) = self.state.window.borrow().tabbed_windows() && index < windows.len() {
+            windows.get(index).unwrap().make_key_window();
         }
     }
     pub fn select_next_tab(&self) {

@@ -26,7 +26,7 @@ fn compile_shaders() {
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
     for (file, entries) in [
         (
-            "wgsl/text.wgsl",
+            "src/renderer/native/text.wgsl",
             &[
                 ("vs_bg", naga::ShaderStage::Vertex),
                 ("vs_text", naga::ShaderStage::Vertex),
@@ -35,7 +35,7 @@ fn compile_shaders() {
             ][..],
         ),
         (
-            "wgsl/rect.wgsl",
+            "src/renderer/native/rect.wgsl",
             &[
                 ("vs_main", naga::ShaderStage::Vertex),
                 ("fs_main", naga::ShaderStage::Fragment),
@@ -89,7 +89,7 @@ fn compile_windows_resource() {
 
         match status {
             Ok(status) if status.success() => {
-                println!("cargo:rustc-link-arg-bin=alacritty={}", res_path.display());
+                println!("cargo:rustc-link-arg-bin={}={}", env!("CARGO_PKG_NAME"), res_path.display());
                 return;
             }
             Ok(status) => {
